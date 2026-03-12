@@ -1,333 +1,190 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="مهامي">
-<meta name="theme-color" content="#0a0a0f">
-<title>مهامي</title>
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #0a0a0f; --surface: #12121a; --surface2: #1a1a26;
-    --border: #2a2a3d; --accent: #6c63ff; --accent2: #25d366;
-    --accent3: #ff6b6b; --text: #e8e8f0; --text-muted: #7070a0; --gold: #f5c842;
-    --safe-top: env(safe-area-inset-top);
-    --safe-bottom: env(safe-area-inset-bottom);
+const express = require('express');
+const cron = require('node-cron');
+const axios = require('axios');
+
+const app = express();
+app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.header('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');res.header('Access-Control-Allow-Headers','Content-Type');if(req.method==='OPTIONS')return res.sendStatus(200);next();});
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ===== Config =====
+const PHONE      = '966535698379';
+const INSTANCE   = 'instance165171';
+const TOKEN      = '79scxmp5uv1687hb';
+const API_URL    = `https://api.ultramsg.com/${INSTANCE}`;
+
+// ===== In-memory DB (يتحفظ على Glitch) =====
+let tasks = [];
+let sentReminders = new Set();
+
+// ===== WhatsApp Send =====
+async function sendWA(to, message) {
+  try {
+    await axios.post(`${API_URL}/messages/chat`, null, {
+      params: { token: TOKEN, to, body: message }
+    });
+  } catch(e) {
+    console.error('WA Error:', e.message);
   }
-  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body { background:var(--bg); color:var(--text); font-family:'Tajawal',sans-serif; min-height:100vh; padding-top:var(--safe-top); padding-bottom:calc(var(--safe-bottom) + 70px); overflow-x:hidden; }
+}
 
-  .app { max-width:600px; margin:0 auto; padding:16px; }
+// ===== Format Time =====
+function fmt12(time24) {
+  if (!time24) return '';
+  const [h, m] = time24.split(':').map(Number);
+  const p = h < 12 ? 'ص' : 'م';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2,'0')} ${p}`;
+}
 
-  .install-banner { background:linear-gradient(135deg,rgba(108,99,255,0.15),rgba(37,211,102,0.1)); border:1px solid rgba(108,99,255,0.3); border-radius:16px; padding:14px 16px; margin-bottom:16px; display:none; align-items:center; gap:12px; }
-  .install-banner.show { display:flex; }
-  .ib-text { flex:1; font-size:13px; line-height:1.6; }
-  .ib-text b { color:var(--accent); }
-  .install-close { background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer; }
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
 
-  .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
-  .header h1 { font-size:24px; font-weight:800; background:linear-gradient(135deg,#fff 0%,var(--accent) 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-  .date-badge { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:6px 12px; font-size:12px; color:var(--text-muted); }
+// ===== Build Task Message =====
+function buildTaskMsg(t) {
+  const icons = { meeting: '📅 اجتماع', task: '✅ مهمة', reminder: '🔔 تذكير' };
+  const h = new Date().getHours();
+  const gr = h < 12 ? 'صباح الخير' : h < 17 ? 'مساء الخير' : 'مساء النور';
+  let msg = `${gr} عبدالعزيز 🌟\n\n`;
+  msg += `${icons[t.type] || '📌 مهمة'}\n`;
+  msg += `📌 *${t.title}*\n`;
+  msg += `⏰ ${fmt12(t.time)}\n`;
+  if (t.note) msg += `📝 ${t.note}\n`;
+  msg += `\n─────────────\n`;
+  msg += `رد بـ *منجز* لتأكيد الإنجاز\n`;
+  msg += `رد بـ *تأجيل* لتأجيلها ساعة\n`;
+  msg += `\n_مهامي_ ✨`;
+  return msg;
+}
 
-  .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:20px; }
-  .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px; text-align:center; }
-  .stat-num { font-size:26px; font-weight:800; display:block; }
-  .stat-label { font-size:11px; color:var(--text-muted); margin-top:2px; }
-  .stat-card:nth-child(1) .stat-num { color:var(--accent); }
-  .stat-card:nth-child(2) .stat-num { color:var(--accent2); }
-  .stat-card:nth-child(3) .stat-num { color:var(--accent3); }
-  .stat-card:nth-child(4) .stat-num { color:var(--gold); }
+// ===== Scheduler: check every minute =====
+cron.schedule('* * * * *', async () => {
+  const now = new Date();
+  const today = todayStr();
+  const cur = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
-  .add-form { background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:16px; margin-bottom:20px; }
+  const due = tasks.filter(t =>
+    !t.done &&
+    t.date === today &&
+    t.time === cur &&
+    !sentReminders.has(t.id)
+  );
 
-  .input-field { background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:12px 14px; color:var(--text); font-family:'Tajawal',sans-serif; font-size:15px; outline:none; width:100%; margin-bottom:10px; -webkit-appearance:none; }
-  .input-field:focus { border-color:var(--accent); }
-  .input-field::placeholder { color:var(--text-muted); }
-
-  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
-  .type-sel { background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:12px 14px; color:var(--text); font-family:'Tajawal',sans-serif; font-size:14px; outline:none; width:100%; -webkit-appearance:none; }
-
-  .time-row { display:flex; align-items:center; gap:8px; background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:10px 14px; margin-bottom:12px; }
-  .time-row label { font-size:13px; color:var(--text-muted); }
-  .t-sel { background:transparent; border:none; outline:none; color:var(--text); font-family:'Tajawal',sans-serif; font-size:22px; font-weight:800; cursor:pointer; text-align:center; -webkit-appearance:none; }
-  #hourSelect { width:44px; }
-  #minuteSelect { width:50px; }
-  .t-sep { font-size:22px; font-weight:800; color:var(--text-muted); }
-  .ampm-box { display:flex; background:var(--bg); border-radius:8px; border:1px solid var(--border); overflow:hidden; margin-right:auto; }
-  .ampm-btn { padding:7px 16px; font-family:'Tajawal',sans-serif; font-size:16px; font-weight:800; cursor:pointer; border:none; background:transparent; color:var(--text-muted); }
-  .ampm-btn.active { background:var(--accent); color:white; }
-
-  .form-opts { display:flex; align-items:center; gap:10px; }
-  .wa-badge { display:flex; align-items:center; gap:6px; background:rgba(37,211,102,.08); border:1px solid rgba(37,211,102,.2); border-radius:10px; padding:8px 12px; font-size:13px; color:var(--accent2); font-weight:600; }
-  .btn-add { background:var(--accent); border:none; border-radius:12px; padding:11px 24px; color:white; font-family:'Tajawal',sans-serif; font-size:15px; font-weight:700; cursor:pointer; margin-right:auto; }
-
-  .ftabs { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:14px; scrollbar-width:none; }
-  .ftabs::-webkit-scrollbar { display:none; }
-  .ftab { background:var(--surface); border:1px solid var(--border); border-radius:20px; padding:7px 16px; font-family:'Tajawal',sans-serif; font-size:13px; color:var(--text-muted); cursor:pointer; white-space:nowrap; flex-shrink:0; }
-  .ftab.active { background:var(--accent); border-color:var(--accent); color:white; }
-
-  .task-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:14px; margin-bottom:10px; animation:si .3s ease; }
-  @keyframes si { from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)} }
-  .task-card.done { opacity:.4; }
-  .task-card.done .ttl { text-decoration:line-through; }
-
-  .tc-top { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
-  .chk { width:26px; height:26px; border-radius:50%; border:2px solid var(--border); cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:13px; margin-top:2px; }
-  .chk.on { background:var(--accent2); border-color:var(--accent2); color:white; }
-  .ticon { width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; }
-  .ticon.meeting { background:rgba(108,99,255,.15); }
-  .ticon.task { background:rgba(37,211,102,.15); }
-  .ticon.reminder { background:rgba(245,200,66,.15); }
-  .tinfo { flex:1; min-width:0; }
-  .ttl { font-size:15px; font-weight:600; margin-bottom:4px; }
-  .ttime-big { font-size:22px; font-weight:800; color:var(--accent); margin-bottom:4px; }
-  .tmeta { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-  .tdate { font-size:12px; color:var(--text-muted); }
-  .bdg { font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600; }
-  .bwa { background:rgba(37,211,102,.12); color:var(--accent2); }
-  .bsent { background:rgba(108,99,255,.12); color:var(--accent); }
-  .bcd { font-size:12px; color:var(--gold); font-weight:700; }
-  .bcd.soon { color:var(--accent3); animation:pulse 1s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
-
-  .tc-btns { display:flex; gap:8px; }
-  .bsend { flex:1; background:rgba(37,211,102,.1); border:1px solid rgba(37,211,102,.3); border-radius:10px; padding:10px; color:var(--accent2); font-family:'Tajawal',sans-serif; font-size:14px; font-weight:700; cursor:pointer; text-align:center; }
-  .bdel { width:44px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text-muted); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:18px; }
-
-  .empty { text-align:center; padding:40px 20px; color:var(--text-muted); }
-  .empty-i { font-size:48px; margin-bottom:10px; }
-
-  .bottom-nav { position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:1px solid var(--border); padding:10px 20px calc(10px + var(--safe-bottom)); display:flex; justify-content:space-around; z-index:100; }
-  .nav-item { display:flex; flex-direction:column; align-items:center; gap:3px; cursor:pointer; color:var(--text-muted); font-family:'Tajawal',sans-serif; font-size:11px; }
-  .nav-item.active { color:var(--accent); }
-  .nav-icon { font-size:24px; }
-
-  .toast { position:fixed; top:calc(20px + var(--safe-top)); left:50%; transform:translateX(-50%) translateY(-100px); background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:12px 20px; font-size:14px; font-weight:600; z-index:999; transition:transform .3s ease; white-space:nowrap; max-width:90vw; text-align:center; }
-  .toast.show { transform:translateX(-50%) translateY(0); }
-  .toast.ok { border-color:var(--accent2); color:var(--accent2); }
-  .toast.err { border-color:var(--accent3); color:var(--accent3); }
-
-  .view { display:none; }
-  .view.active { display:block; }
-</style>
-</head>
-<body>
-<div class="app">
-
-  <div class="install-banner" id="installBanner">
-    <div style="font-size:28px">📲</div>
-    <div class="ib-text">
-      أضفه لشاشتك الرئيسية!<br>
-      اضغط <b>□ مشاركة</b> ← <b>إضافة للشاشة الرئيسية</b>
-    </div>
-    <button class="install-close" onclick="closeInstall()">✕</button>
-  </div>
-
-  <!-- المهام -->
-  <div class="view active" id="viewHome">
-    <div class="header">
-      <h1>📋 مهامي</h1>
-      <div class="date-badge" id="currentDate"></div>
-    </div>
-    <div class="stats">
-      <div class="stat-card"><span class="stat-num" id="sTotal">0</span><span class="stat-label">إجمالي</span></div>
-      <div class="stat-card"><span class="stat-num" id="sDone">0</span><span class="stat-label">منجزة</span></div>
-      <div class="stat-card"><span class="stat-num" id="sPend">0</span><span class="stat-label">غير منجزة</span></div>
-      <div class="stat-card"><span class="stat-num" id="sToday">0</span><span class="stat-label">اليوم</span></div>
-    </div>
-    <div class="ftabs">
-      <div class="ftab active" onclick="setFilter('all',this)">الكل</div>
-      <div class="ftab" onclick="setFilter('today',this)">اليوم</div>
-      <div class="ftab" onclick="setFilter('pending',this)">غير منجزة</div>
-      <div class="ftab" onclick="setFilter('done',this)">منجزة</div>
-      <div class="ftab" onclick="setFilter('upcoming',this)">القادمة</div>
-    </div>
-    <div id="tasksList"></div>
-  </div>
-
-  <!-- إضافة مهمة -->
-  <div class="view" id="viewAdd">
-    <div class="header">
-      <h1>➕ مهمة جديدة</h1>
-    </div>
-    <div class="add-form">
-      <input class="input-field" type="text" id="tTitle" placeholder="عنوان المهمة..." />
-      <div class="row2">
-        <select class="type-sel" id="tType">
-          <option value="meeting">📅 اجتماع</option>
-          <option value="task">✅ مهمة</option>
-          <option value="reminder">🔔 تذكير</option>
-        </select>
-        <input class="input-field" style="margin-bottom:0" type="date" id="tDate" />
-      </div>
-      <div style="height:10px"></div>
-      <div class="time-row">
-        <label>⏰</label>
-        <select class="t-sel" id="minuteSelect">
-          <option value="00" selected>00</option><option value="05">05</option>
-          <option value="10">10</option><option value="15">15</option>
-          <option value="20">20</option><option value="25">25</option>
-          <option value="30">30</option><option value="35">35</option>
-          <option value="40">40</option><option value="45">45</option>
-          <option value="50">50</option><option value="55">55</option>
-        </select>
-        <span class="t-sep">:</span>
-        <select class="t-sel" id="hourSelect">
-          <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-          <option value="4">4</option><option value="5">5</option><option value="6">6</option>
-          <option value="7">7</option><option value="8">8</option><option value="9" selected>9</option>
-          <option value="10">10</option><option value="11">11</option><option value="12">12</option>
-        </select>
-        <div class="ampm-box">
-          <button class="ampm-btn active" id="amBtn" onclick="setAP('am')">ص</button>
-          <button class="ampm-btn" id="pmBtn" onclick="setAP('pm')">م</button>
-        </div>
-      </div>
-      <input class="input-field" type="text" id="tNote" placeholder="ملاحظة (اختياري)" />
-      <div class="form-opts">
-        <div class="wa-badge">💬 واتساب تلقائي ✓</div>
-        <button class="btn-add" onclick="addTask()">حفظ ✓</button>
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<div class="bottom-nav">
-  <div class="nav-item active" id="navHome" onclick="showView('home')">
-    <div class="nav-icon">📋</div>
-    <div>المهام</div>
-  </div>
-  <div class="nav-item" id="navAdd" onclick="showView('add')">
-    <div class="nav-icon">➕</div>
-    <div>إضافة</div>
-  </div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-  const SERVER='https://mahami-production.up.railway.app';
-  let tasks=JSON.parse(localStorage.getItem('mahami_v4')||'[]');
-  let sentIds=new Set(JSON.parse(localStorage.getItem('mahami_sent')||'[]'));
-  let filter='all', ampm='am';
-
-  async function init(){
-    document.getElementById('tDate').value=new Date().toISOString().split('T')[0];
-    document.getElementById('currentDate').textContent=new Date().toLocaleDateString('ar-SA',{month:'short',day:'numeric'});
-    try{
-      const res=await fetch(SERVER+'/tasks');
-      if(res.ok){ const st=await res.json(); if(st.length>0){tasks=st;saveTasks();} }
-    }catch(e){ console.warn('تعذر الاتصال بالسيرفر، تحميل محلي'); }
-    renderTasks(); updateStats();
-    setInterval(tick,30000); tick();
-    const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
-    if(isIOS&&!window.navigator.standalone&&!localStorage.getItem('installDismissed'))
-      document.getElementById('installBanner').classList.add('show');
+  for (const t of due) {
+    sentReminders.add(t.id);
+    await sendWA(PHONE, buildTaskMsg(t));
+    console.log(`📤 أُرسل تذكير: ${t.title}`);
   }
+});
 
-  function closeInstall(){ document.getElementById('installBanner').classList.remove('show'); localStorage.setItem('installDismissed','1'); }
+// ===== Webhook: receive WhatsApp replies =====
+app.post('/webhook', async (req, res) => {
+  res.sendStatus(200);
 
-  function showView(v){
-    document.querySelectorAll('.view').forEach(e=>e.classList.remove('active'));
-    document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));
-    document.getElementById(v==='home'?'viewHome':'viewAdd').classList.add('active');
-    document.getElementById(v==='home'?'navHome':'navAdd').classList.add('active');
+  const body = req.body;
+  const msg  = body?.data?.body?.trim();
+  const from = body?.data?.from;
+
+  if (!msg || !from) return;
+  // Only handle messages from our phone
+  if (!from.includes(PHONE.replace('966', ''))) return;
+
+  console.log(`📩 رد من واتساب: ${msg}`);
+
+  // Find last sent pending task
+  const lastPending = [...tasks]
+    .filter(t => !t.done && sentReminders.has(t.id))
+    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))[0];
+
+  if (!lastPending) return;
+
+  if (msg === 'منجز' || msg === 'تم' || msg === '1') {
+    lastPending.done = true;
+    await sendWA(PHONE,
+      `✅ ممتاز عبدالعزيز!\n\n*${lastPending.title}* تم تحديدها كمنجزة 🎉`
+    );
+  } else if (msg === 'تأجيل' || msg === '2') {
+    // Add 1 hour
+    const [h, m] = lastPending.time.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h + 1, m);
+    lastPending.time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    sentReminders.delete(lastPending.id);
+    await sendWA(PHONE,
+      `⏰ تم تأجيل *${lastPending.title}* لـ ${fmt12(lastPending.time)}`
+    );
+  } else if (msg === 'مهامي' || msg === 'المهام') {
+    // Send today's tasks
+    const today = todayStr();
+    const list = tasks.filter(t => t.date === today && !t.done);
+    if (!list.length) {
+      await sendWA(PHONE, '📭 لا توجد مهام غير منجزة لليوم');
+      return;
+    }
+    let reply = `📋 *مهامك اليوم:*\n\n`;
+    list.forEach((t, i) => {
+      reply += `${i+1}. ${t.title} - ⏰ ${fmt12(t.time)}\n`;
+    });
+    await sendWA(PHONE, reply);
   }
+});
 
-  function setAP(v){ ampm=v; document.getElementById('amBtn').classList.toggle('active',v==='am'); document.getElementById('pmBtn').classList.toggle('active',v==='pm'); }
+// ===== REST API for the web app =====
 
-  function getTime24(){ let h=parseInt(document.getElementById('hourSelect').value); const m=document.getElementById('minuteSelect').value; if(ampm==='am'){if(h===12)h=0;}else{if(h!==12)h+=12;} return `${String(h).padStart(2,'0')}:${m}`; }
+// GET all tasks
+app.get('/tasks', (req, res) => {
+  res.json(tasks);
+});
 
-  function fmt12(t24){ if(!t24)return''; const[h,m]=t24.split(':').map(Number); return`${h%12||12}:${String(m).padStart(2,'0')} ${h<12?'ص':'م'}`; }
+// POST add task
+app.post('/tasks', (req, res) => {
+  const { title, type, date, time, note, withCall } = req.body;
+  if (!title || !date || !time) return res.status(400).json({ error: 'بيانات ناقصة' });
+  const task = {
+    id: Date.now(),
+    title, type: type || 'task',
+    date, time, note: note || '',
+    withCall: !!withCall,
+    done: false,
+    createdAt: new Date().toISOString()
+  };
+  tasks.push(task);
+  res.json(task);
+});
 
-  async function addTask(){
-    const title=document.getElementById('tTitle').value.trim();
-    const type=document.getElementById('tType').value;
-    const date=document.getElementById('tDate').value;
-    const note=document.getElementById('tNote').value.trim();
-    const time=getTime24();
-    if(!title){showToast('⚠️ أدخل عنوان المهمة','err');return;}
-    if(!date){showToast('⚠️ اختر التاريخ','err');return;}
-    const task={id:Date.now(),title,type,date,time,note,done:false};
-    // أرسل للسيرفر أولاً
-    try{
-      const res=await fetch(SERVER+'/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,type,date,time,note})});
-      if(res.ok){const saved=await res.json(); task.id=saved.id;}
-    }catch(e){console.warn('السيرفر غير متاح، حفظ محلي فقط');}
-    tasks.push(task);
-    saveTasks();
-    document.getElementById('tTitle').value='';
-    document.getElementById('tNote').value='';
-    showToast(`✅ أُضيفت - تذكير في ${fmt12(time)}`,'ok');
-    showView('home');
-  }
+// PATCH update task (done/undone)
+app.patch('/tasks/:id', (req, res) => {
+  const t = tasks.find(t => t.id === parseInt(req.params.id));
+  if (!t) return res.status(404).json({ error: 'مهمة غير موجودة' });
+  Object.assign(t, req.body);
+  res.json(t);
+});
 
-  async function toggleDone(id){ const t=tasks.find(t=>t.id===id); if(t){t.done=!t.done;saveTasks();renderTasks();updateStats(); try{await fetch(SERVER+'/tasks/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({done:t.done})});}catch(e){}} }
+// DELETE task
+app.delete('/tasks/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  tasks = tasks.filter(t => t.id !== id);
+  sentReminders.delete(id);
+  res.json({ ok: true });
+});
 
-  async function deleteTask(id){ tasks=tasks.filter(t=>t.id!==id); sentIds.delete(id); saveTasks();renderTasks();updateStats(); showToast('🗑️ تم الحذف','err'); try{await fetch(SERVER+'/tasks/'+id,{method:'DELETE'});}catch(e){} }
+// POST send task now
+app.post('/tasks/:id/send', async (req, res) => {
+  const t = tasks.find(t => t.id === parseInt(req.params.id));
+  if (!t) return res.status(404).json({ error: 'غير موجودة' });
+  await sendWA(PHONE, buildTaskMsg(t));
+  res.json({ ok: true });
+});
 
-  async function sendNow(id){ try{await fetch(SERVER+'/tasks/'+id+'/send',{method:'POST'}); showToast('✅ تم الإرسال!','ok');}catch(e){const t=tasks.find(t=>t.id===id); if(t)await sendWA(buildMsg(t)); showToast('✅ تم الإرسال!','ok');} }
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    status: '🟢 مهامي شغّال',
+    tasks: tasks.length,
+    time: new Date().toLocaleString('ar-SA')
+  });
+});
 
-  function saveTasks(){ localStorage.setItem('mahami_v4',JSON.stringify(tasks)); localStorage.setItem('mahami_sent',JSON.stringify([...sentIds])); }
-
-  function getFiltered(){
-    const today=new Date().toISOString().split('T')[0];
-    let f=[...tasks];
-    if(filter==='today')f=tasks.filter(t=>t.date===today);
-    else if(filter==='pending')f=tasks.filter(t=>!t.done);
-    else if(filter==='done')f=tasks.filter(t=>t.done);
-    else if(filter==='upcoming')f=tasks.filter(t=>t.date>today);
-    return f.sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
-  }
-
-  function renderTasks(){
-    const list=document.getElementById('tasksList');
-    const filtered=getFiltered();
-    if(!filtered.length){list.innerHTML='<div class="empty"><div class="empty-i">📭</div><div>لا توجد مهام</div></div>';return;}
-    const icons={meeting:'📅',task:'✅',reminder:'🔔'};
-    const today=new Date().toISOString().split('T')[0];
-    const now=new Date();
-    list.innerHTML=filtered.map(t=>{
-      const ds=t.date===today?'اليوم':new Date(t.date+'T00:00:00').toLocaleDateString('ar-SA',{weekday:'short',month:'short',day:'numeric'});
-      const isSent=sentIds.has(t.id);
-      let cd='';
-      if(!t.done&&t.time){const dt=new Date(t.date+'T'+t.time);const diff=dt-now;if(diff>0&&diff<86400000){const h=Math.floor(diff/3600000),m=Math.floor((diff%3600000)/60000);cd=`<span class="bcd ${diff<3600000?'soon':''}">⏳ ${h>0?h+'س ':''}${m}د</span>`;}}
-      return`<div class="task-card ${t.done?'done':''}">
-        <div class="tc-top">
-          <div class="chk ${t.done?'on':''}" onclick="toggleDone(${t.id})">${t.done?'✓':''}</div>
-          <div class="ticon ${t.type}">${icons[t.type]||'📌'}</div>
-          <div class="tinfo">
-            <div class="ttl">${t.title}</div>
-            <div class="ttime-big">${fmt12(t.time)}</div>
-            <div class="tmeta"><span class="tdate">${ds}</span>${cd}<span class="bdg bwa">💬</span>${isSent?'<span class="bdg bsent">✓ أُرسل</span>':''}</div>
-            ${t.note?`<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">📝 ${t.note}</div>`:''}
-          </div>
-        </div>
-        <div class="tc-btns">
-          <button class="bsend" onclick="sendNow(${t.id})">💬 إرسال واتساب</button>
-          <button class="bdel" onclick="deleteTask(${t.id})">🗑️</button>
-        </div>
-      </div>`;
-    }).join('');
-  }
-
-  function setFilter(f,el){ filter=f; document.querySelectorAll('.ftab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderTasks(); }
-
-  function updateStats(){ const today=new Date().toISOString().split('T')[0]; document.getElementById('sTotal').textContent=tasks.length; document.getElementById('sDone').textContent=tasks.filter(t=>t.done).length; document.getElementById('sPend').textContent=tasks.filter(t=>!t.done).length; document.getElementById('sToday').textContent=tasks.filter(t=>t.date===today).length; }
-
-  async function sendWA(msg){ const url=`https://api.ultramsg.com/${INSTANCE_ID}/messages/chat?token=${TOKEN}&to=${MY_PHONE}&body=${encodeURIComponent(msg)}`; try{await fetch(url,{method:'GET',mode:'no-cors'});}catch(e){} }
-
-  function buildMsg(t){ const icons={meeting:'📅 اجتماع',task:'✅ مهمة',reminder:'🔔 تذكير'}; const h=new Date().getHours(); const gr=h<12?'صباح الخير':h<17?'مساء الخير':'مساء النور'; let msg=`${gr} عبدالعزيز 🌟\n\n${icons[t.type]||'📌'}\n📌 *${t.title}*\n⏰ ${fmt12(t.time)}`; if(t.note)msg+=`\n📝 ${t.note}`; msg+='\n\n_تذكير تلقائي من مهامي_ ✨'; return msg; }
-
-  function tick(){ const now=new Date(); const today=now.toISOString().split('T')[0]; const cur=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`; tasks.filter(t=>!t.done&&!sentIds.has(t.id)&&t.date===today&&t.time===cur).forEach(async t=>{sentIds.add(t.id);saveTasks();await sendWA(buildMsg(t));showToast(`✅ ${t.title}`,'ok');renderTasks();}); }
-
-  function showToast(msg,type='ok'){ const t=document.getElementById('toast'); t.textContent=msg; t.className=`toast ${type} show`; setTimeout(()=>t.classList.remove('show'),3500); }
-
-  init();
-</script>
-</body>
-</html>
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 مهامي سيرفر شغّال على port ${PORT}`));
