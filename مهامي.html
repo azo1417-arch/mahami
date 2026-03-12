@@ -215,9 +215,13 @@
   let sentIds=new Set(JSON.parse(localStorage.getItem('mahami_sent')||'[]'));
   let filter='all', ampm='am';
 
-  function init(){
+  async function init(){
     document.getElementById('tDate').value=new Date().toISOString().split('T')[0];
     document.getElementById('currentDate').textContent=new Date().toLocaleDateString('ar-SA',{month:'short',day:'numeric'});
+    try{
+      const res=await fetch(SERVER+'/tasks');
+      if(res.ok){ const st=await res.json(); if(st.length>0){tasks=st;saveTasks();} }
+    }catch(e){ console.warn('تعذر الاتصال بالسيرفر، تحميل محلي'); }
     renderTasks(); updateStats();
     setInterval(tick,30000); tick();
     const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -240,7 +244,7 @@
 
   function fmt12(t24){ if(!t24)return''; const[h,m]=t24.split(':').map(Number); return`${h%12||12}:${String(m).padStart(2,'0')} ${h<12?'ص':'م'}`; }
 
-  function addTask(){
+  async function addTask(){
     const title=document.getElementById('tTitle').value.trim();
     const type=document.getElementById('tType').value;
     const date=document.getElementById('tDate').value;
@@ -248,7 +252,13 @@
     const time=getTime24();
     if(!title){showToast('⚠️ أدخل عنوان المهمة','err');return;}
     if(!date){showToast('⚠️ اختر التاريخ','err');return;}
-    tasks.push({id:Date.now(),title,type,date,time,note,done:false});
+    const task={id:Date.now(),title,type,date,time,note,done:false};
+    // أرسل للسيرفر أولاً
+    try{
+      const res=await fetch(SERVER+'/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,type,date,time,note})});
+      if(res.ok){const saved=await res.json(); task.id=saved.id;}
+    }catch(e){console.warn('السيرفر غير متاح، حفظ محلي فقط');}
+    tasks.push(task);
     saveTasks();
     document.getElementById('tTitle').value='';
     document.getElementById('tNote').value='';
