@@ -1,0 +1,189 @@
+const express = require('express');
+const cron = require('node-cron');
+const axios = require('axios');
+
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ===== Config =====
+const PHONE      = '966563466639';
+const INSTANCE   = 'instance165171';
+const TOKEN      = '79scxmp5uv1687hb';
+const API_URL    = `https://api.ultramsg.com/${INSTANCE}`;
+
+// ===== In-memory DB (يتحفظ على Glitch) =====
+let tasks = [];
+let sentReminders = new Set();
+
+// ===== WhatsApp Send =====
+async function sendWA(to, message) {
+  try {
+    await axios.post(`${API_URL}/messages/chat`, null, {
+      params: { token: TOKEN, to, body: message }
+    });
+  } catch(e) {
+    console.error('WA Error:', e.message);
+  }
+}
+
+// ===== Format Time =====
+function fmt12(time24) {
+  if (!time24) return '';
+  const [h, m] = time24.split(':').map(Number);
+  const p = h < 12 ? 'ص' : 'م';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2,'0')} ${p}`;
+}
+
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+
+// ===== Build Task Message =====
+function buildTaskMsg(t) {
+  const icons = { meeting: '📅 اجتماع', task: '✅ مهمة', reminder: '🔔 تذكير' };
+  const h = new Date().getHours();
+  const gr = h < 12 ? 'صباح الخير' : h < 17 ? 'مساء الخير' : 'مساء النور';
+  let msg = `${gr} عبدالعزيز 🌟\n\n`;
+  msg += `${icons[t.type] || '📌 مهمة'}\n`;
+  msg += `📌 *${t.title}*\n`;
+  msg += `⏰ ${fmt12(t.time)}\n`;
+  if (t.note) msg += `📝 ${t.note}\n`;
+  msg += `\n─────────────\n`;
+  msg += `رد بـ *منجز* لتأكيد الإنجاز\n`;
+  msg += `رد بـ *تأجيل* لتأجيلها ساعة\n`;
+  msg += `\n_مهامي_ ✨`;
+  return msg;
+}
+
+// ===== Scheduler: check every minute =====
+cron.schedule('* * * * *', async () => {
+  const now = new Date();
+  const today = todayStr();
+  const cur = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  const due = tasks.filter(t =>
+    !t.done &&
+    t.date === today &&
+    t.time === cur &&
+    !sentReminders.has(t.id)
+  );
+
+  for (const t of due) {
+    sentReminders.add(t.id);
+    await sendWA(PHONE, buildTaskMsg(t));
+    console.log(`📤 أُرسل تذكير: ${t.title}`);
+  }
+});
+
+// ===== Webhook: receive WhatsApp replies =====
+app.post('/webhook', async (req, res) => {
+  res.sendStatus(200);
+
+  const body = req.body;
+  const msg  = body?.data?.body?.trim();
+  const from = body?.data?.from;
+
+  if (!msg || !from) return;
+  // Only handle messages from our phone
+  if (!from.includes(PHONE.replace('966', ''))) return;
+
+  console.log(`📩 رد من واتساب: ${msg}`);
+
+  // Find last sent pending task
+  const lastPending = [...tasks]
+    .filter(t => !t.done && sentReminders.has(t.id))
+    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))[0];
+
+  if (!lastPending) return;
+
+  if (msg === 'منجز' || msg === 'تم' || msg === '1') {
+    lastPending.done = true;
+    await sendWA(PHONE,
+      `✅ ممتاز عبدالعزيز!\n\n*${lastPending.title}* تم تحديدها كمنجزة 🎉`
+    );
+  } else if (msg === 'تأجيل' || msg === '2') {
+    // Add 1 hour
+    const [h, m] = lastPending.time.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h + 1, m);
+    lastPending.time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    sentReminders.delete(lastPending.id);
+    await sendWA(PHONE,
+      `⏰ تم تأجيل *${lastPending.title}* لـ ${fmt12(lastPending.time)}`
+    );
+  } else if (msg === 'مهامي' || msg === 'المهام') {
+    // Send today's tasks
+    const today = todayStr();
+    const list = tasks.filter(t => t.date === today && !t.done);
+    if (!list.length) {
+      await sendWA(PHONE, '📭 لا توجد مهام غير منجزة لليوم');
+      return;
+    }
+    let reply = `📋 *مهامك اليوم:*\n\n`;
+    list.forEach((t, i) => {
+      reply += `${i+1}. ${t.title} - ⏰ ${fmt12(t.time)}\n`;
+    });
+    await sendWA(PHONE, reply);
+  }
+});
+
+// ===== REST API for the web app =====
+
+// GET all tasks
+app.get('/tasks', (req, res) => {
+  res.json(tasks);
+});
+
+// POST add task
+app.post('/tasks', (req, res) => {
+  const { title, type, date, time, note, withCall } = req.body;
+  if (!title || !date || !time) return res.status(400).json({ error: 'بيانات ناقصة' });
+  const task = {
+    id: Date.now(),
+    title, type: type || 'task',
+    date, time, note: note || '',
+    withCall: !!withCall,
+    done: false,
+    createdAt: new Date().toISOString()
+  };
+  tasks.push(task);
+  res.json(task);
+});
+
+// PATCH update task (done/undone)
+app.patch('/tasks/:id', (req, res) => {
+  const t = tasks.find(t => t.id === parseInt(req.params.id));
+  if (!t) return res.status(404).json({ error: 'مهمة غير موجودة' });
+  Object.assign(t, req.body);
+  res.json(t);
+});
+
+// DELETE task
+app.delete('/tasks/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  tasks = tasks.filter(t => t.id !== id);
+  sentReminders.delete(id);
+  res.json({ ok: true });
+});
+
+// POST send task now
+app.post('/tasks/:id/send', async (req, res) => {
+  const t = tasks.find(t => t.id === parseInt(req.params.id));
+  if (!t) return res.status(404).json({ error: 'غير موجودة' });
+  await sendWA(PHONE, buildTaskMsg(t));
+  res.json({ ok: true });
+});
+
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    status: '🟢 مهامي شغّال',
+    tasks: tasks.length,
+    time: new Date().toLocaleString('ar-SA')
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 مهامي سيرفر شغّال على port ${PORT}`));
