@@ -308,7 +308,10 @@ app.post('/webhook', async (req, res) => {
   const body = req.body;
   const msg  = body?.data?.body?.trim();
   const from = body?.data?.from;
+  const fromMe = body?.data?.fromMe;
   if (!msg || !from) return;
+  if (fromMe) return; // تجاهل رسائل البوت نفسه
+  if (from === PHONE + '@c.us' && body?.data?.type === 'chat' && fromMe) return;
   console.log(`📩 ${msg}`);
 
   const state = userState[from] || { step: 'idle' };
