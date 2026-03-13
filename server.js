@@ -113,8 +113,8 @@ function isOverdue(t) {
 }
 
 function buildTaskMsg(t) {
-  const h = new Date().getHours();
-  const gr = h < 12 ? 'صباح الخير' : h < 17 ? 'مساء الخير' : 'مساء النور';
+  const h = getSaudiNow().getHours();
+  const gr = h < 12 ? 'صباح الخير' : 'مساء الخير';
   const icons = { meeting: '📅 اجتماع', task: '✅ مهمة', reminder: '🔔 تذكير' };
   let msg = `${gr} عبدالعزيز 🌟\n\n${icons[t.type]||'📌 مهمة'}\n`;
   msg += `${priorityIcon(t.priority)} *${t.title}*\n`;
@@ -226,15 +226,15 @@ cron.schedule('* * * * *', async () => {
   } catch(e) { console.error('Cron error:', e.message); }
 });
 
-// تذكير صباحي افتراضي الساعة 8 (إذا ما في وقت مخصص)
-cron.schedule('0 8 * * *', async () => {
+// تذكير صباحي افتراضي الساعة 8 صباحاً بتوقيت السعودية (UTC+3 = 05:00 UTC)
+cron.schedule('0 5 * * *', async () => {
   const customTime = await getSetting('daily_reminder_time');
   if (customTime) return;
   await sendDailyReminder();
 });
 
-// تذكير مسائي الساعة 9 بمهام الغد
-cron.schedule('0 21 * * *', async () => {
+// تذكير مسائي الساعة 9 مساءً بتوقيت السعودية (UTC+3 = 18:00 UTC)
+cron.schedule('0 18 * * *', async () => {
   const tomorrow = tomorrowStr();
   try {
     const res = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [tomorrow]);
@@ -261,7 +261,7 @@ async function sendDailyReminder() {
 
     if (overdue.rows.length === 0 && todayTasks.rows.length === 0) return;
 
-    const h = new Date().getHours();
+    const h = getSaudiNow().getHours();
     const gr = h < 12 ? 'صباح الخير' : 'مساء الخير';
     let msg = `${gr} عبدالعزيز ☀️\n\n`;
 
