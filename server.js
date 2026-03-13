@@ -122,17 +122,10 @@ function buildTaskMsg(t) {
   return msg;
 }
 
-// صيغة احترافية للمشاركة
-function buildShareMsg(tasks, label, recipientName) {
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('ar-SA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-
-  let msg = `┌─────────────────────┐\n`;
-  msg += `│     📋 جدول مهام عبدالعزيز     │\n`;
-  msg += `└─────────────────────┘\n\n`;
-  msg += `📌 *${label}*\n`;
-  msg += `📆 ${dateStr}\n`;
-  msg += `─────────────────────\n\n`;
+// صيغة المشاركة
+function buildShareMsg(tasks, label) {
+  let msg = `📋 *جدول مهام عبدالعزيز*\n`;
+  msg += `📌 ${label}\n\n`;
 
   // تجميع حسب التاريخ
   const byDate = {};
@@ -146,12 +139,11 @@ function buildShareMsg(tasks, label, recipientName) {
   Object.keys(byDate).sort().forEach(date => {
     const d = new Date(date);
     const dayName = dayNames[d.getDay()];
-    msg += `📅 *${dayName} - ${date}*\n`;
-    msg += `${'─'.repeat(20)}\n`;
+    if (Object.keys(byDate).length > 1) msg += `📅 *${dayName} ${date}*\n`;
     byDate[date].sort((a,b)=>a.time.localeCompare(b.time)).forEach((t, i) => {
-      msg += `\n${i+1}. ${typeIcon(t.type)} *${t.title}*\n`;
+      msg += `${i+1}. ${typeIcon(t.type)} *${t.title}*\n`;
       msg += `    ⏰ ${fmt12(t.time)}`;
-      if (t.priority === 'high') msg += ` ${priorityIcon(t.priority)} عاجل`;
+      if (t.priority === 'high') msg += ` 🔴 عاجل`;
       msg += `\n`;
       if (t.location) msg += `    📍 ${t.location}\n`;
       if (t.note) msg += `    📝 ${t.note}\n`;
@@ -159,9 +151,8 @@ function buildShareMsg(tasks, label, recipientName) {
     msg += `\n`;
   });
 
-  msg += `─────────────────────\n`;
   msg += `📊 الإجمالي: ${tasks.length} ${tasks.length === 1 ? 'مهمة' : 'مهام'}\n`;
-  msg += `\n_أُرسل عبر تطبيق مهامي_ ✨`;
+  msg += `_أُرسل عبر عبدالعزيز_ ✨`;
   return msg;
 }
 
