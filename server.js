@@ -91,7 +91,7 @@ async function parseTaskFromMessage(msg) {
         'content-type': 'application/json'
       }
     });
-    const text = response.data.content[0].text.trim();
+    const text = response.data.content[0].text.trim().replace(/```json|```/g, '').trim();
     return JSON.parse(text);
   } catch(e) {
     console.error('AI Error:', e.message);
