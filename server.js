@@ -70,13 +70,16 @@ function fmt12(time24) {
   return `${h12}:${String(m).padStart(2,'0')} ${p}`;
 }
 
-function todayStr() { return new Date().toISOString().split('T')[0]; }
+function getSaudiNow() {
+  return new Date(new Date().getTime() + 3 * 60 * 60 * 1000);
+}
+function todayStr() { return getSaudiNow().toISOString().split('T')[0]; }
 function tomorrowStr() {
-  const d = new Date(); d.setDate(d.getDate() + 1);
+  const d = getSaudiNow(); d.setDate(d.getDate() + 1);
   return d.toISOString().split('T')[0];
 }
 function nowTimeStr() {
-  const now = new Date();
+  const now = getSaudiNow();
   return `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 }
 function addMinutesToTime(time24, minutes) {
