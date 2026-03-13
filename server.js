@@ -78,7 +78,7 @@ async function parseTaskFromMessage(msg) {
   try {
     const todayISO = new Date().toISOString().split('T')[0];
     const response = await axios.post('https://api.anthropic.com/v1/messages', {
-      model: 'claude-haiku-20240307',
+      model: 'claude-3-haiku-20240307',
       max_tokens: 500,
       messages: [{
         role: 'user',
