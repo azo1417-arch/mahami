@@ -1,34 +1,50 @@
 const express = require('express');
 const cron = require('node-cron');
 const axios = require('axios');
+const { Pool } = require('pg');
 
 const app = express();
 app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.header('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');res.header('Access-Control-Allow-Headers','Content-Type');if(req.method==='OPTIONS')return res.sendStatus(200);next();});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ===== Config =====
-const PHONE      = '966563466639';
-const INSTANCE   = 'instance165171';
-const TOKEN      = '79scxmp5uv1687hb';
-const API_URL    = `https://api.ultramsg.com/${INSTANCE}`;
+const PHONE    = '966563466639';
+const INSTANCE = 'instance165171';
+const TOKEN    = '79scxmp5uv1687hb';
+const API_URL  = `https://api.ultramsg.com/${INSTANCE}`;
 
-// ===== In-memory DB (يتحفظ على Glitch) =====
-let tasks = [];
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:gLAYYfVCLDpxMTsCirlWkplBaDYxqzvU@postgres.railway.internal:5432/railway',
+  ssl: { rejectUnauthorized: false }
+});
+
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id BIGINT PRIMARY KEY,
+      title TEXT NOT NULL,
+      type TEXT DEFAULT 'task',
+      date TEXT,
+      time TEXT,
+      note TEXT DEFAULT '',
+      done BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  console.log('✅ قاعدة البيانات جاهزة');
+}
+initDB();
+
 let sentReminders = new Set();
 
-// ===== WhatsApp Send =====
 async function sendWA(to, message) {
   try {
     await axios.post(`${API_URL}/messages/chat`, null, {
       params: { token: TOKEN, to, body: message }
     });
-  } catch(e) {
-    console.error('WA Error:', e.message);
-  }
+  } catch(e) { console.error('WA Error:', e.message); }
 }
 
-// ===== Format Time =====
 function fmt12(time24) {
   if (!time24) return '';
   const [h, m] = time24.split(':').map(Number);
@@ -41,7 +57,6 @@ function todayStr() {
   return new Date().toISOString().split('T')[0];
 }
 
-// ===== Build Task Message =====
 function buildTaskMsg(t) {
   const icons = { meeting: '📅 اجتماع', task: '✅ مهمة', reminder: '🔔 تذكير' };
   const h = new Date().getHours();
@@ -58,132 +73,95 @@ function buildTaskMsg(t) {
   return msg;
 }
 
-// ===== Scheduler: check every minute =====
 cron.schedule('* * * * *', async () => {
-  const now = new Date();
   const today = todayStr();
+  const now = new Date();
   const cur = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
-  const due = tasks.filter(t =>
-    !t.done &&
-    t.date === today &&
-    t.time === cur &&
-    !sentReminders.has(t.id)
-  );
-
-  for (const t of due) {
-    sentReminders.add(t.id);
-    await sendWA(PHONE, buildTaskMsg(t));
-    console.log(`📤 أُرسل تذكير: ${t.title}`);
-  }
+  try {
+    const res = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 AND time=$2', [today, cur]);
+    for (const t of res.rows) {
+      if (!sentReminders.has(t.id)) {
+        sentReminders.add(t.id);
+        await sendWA(PHONE, buildTaskMsg(t));
+        console.log(`📤 أُرسل تذكير: ${t.title}`);
+      }
+    }
+  } catch(e) { console.error('Cron error:', e.message); }
 });
 
-// ===== Webhook: receive WhatsApp replies =====
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
-
   const body = req.body;
   const msg  = body?.data?.body?.trim();
   const from = body?.data?.from;
-
   if (!msg || !from) return;
-  // Only handle messages from our phone
-  if (!from.includes(PHONE.replace('966', ''))) return;
-
   console.log(`📩 رد من واتساب: ${msg}`);
-
-  // Find last sent pending task
-  const lastPending = [...tasks]
-    .filter(t => !t.done && sentReminders.has(t.id))
-    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))[0];
-
-  if (!lastPending) return;
-
-  if (msg === 'منجز' || msg === 'تم' || msg === '1') {
-    lastPending.done = true;
-    await sendWA(PHONE,
-      `✅ ممتاز عبدالعزيز!\n\n*${lastPending.title}* تم تحديدها كمنجزة 🎉`
-    );
-  } else if (msg === 'تأجيل' || msg === '2') {
-    // Add 1 hour
-    const [h, m] = lastPending.time.split(':').map(Number);
-    const d = new Date();
-    d.setHours(h + 1, m);
-    lastPending.time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    sentReminders.delete(lastPending.id);
-    await sendWA(PHONE,
-      `⏰ تم تأجيل *${lastPending.title}* لـ ${fmt12(lastPending.time)}`
-    );
-  } else if (msg === 'مهامي' || msg === 'المهام') {
-    // Send today's tasks
-    const today = todayStr();
-    const list = tasks.filter(t => t.date === today && !t.done);
-    if (!list.length) {
-      await sendWA(PHONE, '📭 لا توجد مهام غير منجزة لليوم');
-      return;
+  try {
+    const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date DESC, time DESC LIMIT 1');
+    const lastPending = result.rows[0];
+    if (!lastPending) return;
+    if (msg === 'منجز' || msg === 'تم' || msg === '1') {
+      await pool.query('UPDATE tasks SET done=true WHERE id=$1', [lastPending.id]);
+      await sendWA(PHONE, `✅ ممتاز عبدالعزيز!\n\n*${lastPending.title}* تم تحديدها كمنجزة 🎉`);
+    } else if (msg === 'تأجيل' || msg === '2') {
+      const [h, m] = lastPending.time.split(':').map(Number);
+      const d = new Date();
+      d.setHours(h + 1, m);
+      const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, lastPending.id]);
+      sentReminders.delete(lastPending.id);
+      await sendWA(PHONE, `⏰ تم تأجيل *${lastPending.title}* لـ ${fmt12(newTime)}`);
     }
-    let reply = `📋 *مهامك اليوم:*\n\n`;
-    list.forEach((t, i) => {
-      reply += `${i+1}. ${t.title} - ⏰ ${fmt12(t.time)}\n`;
-    });
-    await sendWA(PHONE, reply);
-  }
+  } catch(e) { console.error('Webhook error:', e.message); }
 });
 
-// ===== REST API for the web app =====
-
-// GET all tasks
-app.get('/tasks', (req, res) => {
-  res.json(tasks);
+app.get('/tasks', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM tasks ORDER BY date, time');
+    res.json(result.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST add task
-app.post('/tasks', (req, res) => {
-  const { title, type, date, time, note, withCall } = req.body;
+app.post('/tasks', async (req, res) => {
+  const { title, type, date, time, note } = req.body;
   if (!title || !date || !time) return res.status(400).json({ error: 'بيانات ناقصة' });
-  const task = {
-    id: Date.now(),
-    title, type: type || 'task',
-    date, time, note: note || '',
-    withCall: !!withCall,
-    done: false,
-    createdAt: new Date().toISOString()
-  };
-  tasks.push(task);
-  res.json(task);
+  const id = Date.now();
+  try {
+    await pool.query('INSERT INTO tasks (id, title, type, date, time, note) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, title, type||'task', date, time, note||'']);
+    res.json({ id, title, type: type||'task', date, time, note: note||'', done: false });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// PATCH update task (done/undone)
-app.patch('/tasks/:id', (req, res) => {
-  const t = tasks.find(t => t.id === parseInt(req.params.id));
-  if (!t) return res.status(404).json({ error: 'مهمة غير موجودة' });
-  Object.assign(t, req.body);
-  res.json(t);
+app.patch('/tasks/:id', async (req, res) => {
+  const { done } = req.body;
+  try {
+    await pool.query('UPDATE tasks SET done=$1 WHERE id=$2', [done, req.params.id]);
+    const result = await pool.query('SELECT * FROM tasks WHERE id=$1', [req.params.id]);
+    res.json(result.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE task
-app.delete('/tasks/:id', (req, res) => {
-  const id = parseInt(req.params.id);
-  tasks = tasks.filter(t => t.id !== id);
-  sentReminders.delete(id);
-  res.json({ ok: true });
+app.delete('/tasks/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM tasks WHERE id=$1', [req.params.id]);
+    sentReminders.delete(parseInt(req.params.id));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST send task now
 app.post('/tasks/:id/send', async (req, res) => {
-  const t = tasks.find(t => t.id === parseInt(req.params.id));
-  if (!t) return res.status(404).json({ error: 'غير موجودة' });
-  await sendWA(PHONE, buildTaskMsg(t));
-  res.json({ ok: true });
+  try {
+    const result = await pool.query('SELECT * FROM tasks WHERE id=$1', [req.params.id]);
+    const t = result.rows[0];
+    if (!t) return res.status(404).json({ error: 'غير موجودة' });
+    await sendWA(PHONE, buildTaskMsg(t));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Health check
 app.get('/', (req, res) => {
-  res.json({
-    status: '🟢 مهامي شغّال',
-    tasks: tasks.length,
-    time: new Date().toLocaleString('ar-SA')
-  });
+  res.json({ status: '🟢 مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
 });
 
 const PORT = process.env.PORT || 3000;
