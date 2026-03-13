@@ -33,7 +33,6 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
-  // اضافة عمود location اذا مو موجود
   await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS location TEXT DEFAULT ''`);
   console.log('✅ قاعدة البيانات جاهزة');
 }
@@ -62,6 +61,14 @@ function todayStr() {
   return new Date().toISOString().split('T')[0];
 }
 
+function addMinutesToTime(time24, minutes) {
+  const [h, m] = time24.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  const newH = Math.floor(total / 60) % 24;
+  const newM = total % 60;
+  return `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+}
+
 function buildTaskMsg(t) {
   const icons = { meeting: '📅 اجتماع', task: '✅ مهمة', reminder: '🔔 تذكير' };
   const h = new Date().getHours();
@@ -74,7 +81,7 @@ function buildTaskMsg(t) {
   if (t.location) msg += `📍 ${t.location}\n`;
   msg += `\n─────────────\n`;
   msg += `رد بـ *منجز* لتأكيد الإنجاز\n`;
-  msg += `رد بـ *تأجيل* لتأجيلها ساعة\n`;
+  msg += `رد بـ *تأجيل* لتأجيلها\n`;
   msg += `\n_مهامي_ ✨`;
   return msg;
 }
@@ -92,7 +99,7 @@ async function parseTaskFromMessage(msg) {
 
 قواعد تحديد النوع:
 - إذا ذكر كلمة اجتماع أو meeting أو لقاء أو مقابلة → type: meeting
-- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder  
+- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder
 - غير ذلك → type: task
 
 مهم: إذا لم يُذكر تاريخ اجعل date: null. إذا لم يُذكر وقت اجعل time: null.
@@ -151,7 +158,8 @@ app.post('/webhook', async (req, res) => {
         const id = Date.now();
         await pool.query('INSERT INTO tasks (id, title, type, date, time, note, location) VALUES ($1,$2,$3,$4,$5,$6,$7)',
           [id, state.taskTitle, state.taskType||'task', parsed.date, parsed.time, state.taskNote||'', '']);
-        await sendWA(from, `✅ تم تسجيل المهمة!\n\n📌 *${state.taskTitle}*\n⏰ ${fmt12(parsed.time)}\n📅 ${parsed.date}\n\nسأذكرك في الوقت المحدد 🔔`);
+        const icon = state.taskType === 'reminder' ? '🔔' : '✅';
+        await sendWA(from, `${icon} تم تسجيل ${state.taskType === 'reminder' ? 'التذكير' : 'المهمة'}!\n\n📌 *${state.taskTitle}*\n⏰ ${fmt12(parsed.time)}\n📅 ${parsed.date}\n\nسأذكرك في الوقت المحدد 🔔`);
         userState[from] = { step: 'idle' };
       }
     } else {
@@ -193,17 +201,38 @@ app.post('/webhook', async (req, res) => {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
       const t = state.tasks[num - 1];
-      const [h, m] = t.time.split(':').map(Number);
-      const d = new Date();
-      d.setHours(h + 1, m);
-      const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-      await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
-      sentReminders.delete(t.id);
-      await sendWA(from, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
-      userState[from] = { step: 'idle' };
+      userState[from] = { step: 'waiting_postpone_duration', task: t };
+      await sendWA(from, `⏰ *كم تريد تأجيل "${t.title}"؟*\n\n1. 15 دقيقة\n2. 30 دقيقة\n3. ساعة\n4. ساعتين\n5. أرسل عدد الدقائق يدوياً`);
     } else {
       await sendWA(from, `❓ أرسل رقم المهمة فقط من القائمة`);
     }
+    return;
+  }
+
+  // --- انتظار مدة التأجيل ---
+  if (state.step === 'waiting_postpone_duration') {
+    const t = state.task;
+    const durations = { '1': 15, '2': 30, '3': 60, '4': 120 };
+    let minutes = 0;
+
+    if (durations[msg]) {
+      minutes = durations[msg];
+    } else {
+      const num = parseInt(msg);
+      if (!isNaN(num) && num > 0 && num <= 1440) {
+        minutes = num;
+      } else {
+        await sendWA(from, `❓ أرسل رقم من القائمة أو عدد الدقائق (مثال: 45)`);
+        return;
+      }
+    }
+
+    const newTime = addMinutesToTime(t.time, minutes);
+    await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
+    sentReminders.delete(t.id);
+    const label = minutes < 60 ? `${minutes} دقيقة` : minutes === 60 ? 'ساعة' : minutes === 120 ? 'ساعتين' : `${minutes} دقيقة`;
+    await sendWA(from, `⏰ تم تأجيل *${t.title}*\nمدة ${label} → ${fmt12(newTime)}`);
+    userState[from] = { step: 'idle' };
     return;
   }
 
@@ -243,7 +272,13 @@ app.post('/webhook', async (req, res) => {
     const num = parseInt(msg);
     const t = state.task;
     const fields = { 1: 'title', 2: 'time', 3: 'date', 4: 'note', 5: 'location' };
-    const labels = { 1: 'العنوان الجديد', 2: 'الوقت الجديد (مثال: 3:00 م أو 15:00)', 3: 'التاريخ الجديد (مثال: غداً أو 2026-03-15)', 4: 'الملاحظة الجديدة', 5: 'الموقع الجديد (رابط قوقل ماب أو اسم المكان)' };
+    const labels = {
+      1: 'العنوان الجديد',
+      2: 'الوقت الجديد (مثال: 3:00 م أو 15:00)',
+      3: 'التاريخ الجديد (مثال: غداً أو 2026-03-15)',
+      4: 'الملاحظة الجديدة (أو أرسل تخطي لحذفها)',
+      5: 'الموقع الجديد (رابط قوقل ماب أو اسم المكان أو تخطي لحذفه)'
+    };
     if (fields[num] && (num !== 5 || t.type === 'meeting')) {
       userState[from] = { step: 'waiting_edit_value', task: t, field: fields[num] };
       await sendWA(from, `✏️ أرسل ${labels[num]}:`);
@@ -257,21 +292,30 @@ app.post('/webhook', async (req, res) => {
   if (state.step === 'waiting_edit_value') {
     const t = state.task;
     const field = state.field;
-    let newValue = msg;
+    let newValue = msg === 'تخطي' ? '' : msg;
 
-    if (field === 'time' || field === 'date') {
-      const parsed = await parseTaskFromMessage(`مهمة ${field === 'time' ? msg : 'في ' + msg}`);
-      if (field === 'time' && parsed && parsed.time) newValue = parsed.time;
-      else if (field === 'date' && parsed && parsed.date) newValue = parsed.date;
+    if (field === 'time' && msg !== 'تخطي') {
+      const parsed = await parseTaskFromMessage(`مهمة الساعة ${msg}`);
+      if (parsed && parsed.time) newValue = parsed.time;
       else {
-        await sendWA(from, `❓ لم أفهم. أرسل مثلاً:\n${field === 'time' ? '"الساعة 3 العصر" أو "15:00"' : '"غداً" أو "2026-03-15"'}`);
+        await sendWA(from, `❓ لم أفهم الوقت. أرسل مثلاً: "3 العصر" أو "15:00"`);
+        return;
+      }
+    } else if (field === 'date' && msg !== 'تخطي') {
+      const parsed = await parseTaskFromMessage(`مهمة في ${msg}`);
+      if (parsed && parsed.date) newValue = parsed.date;
+      else {
+        await sendWA(from, `❓ لم أفهم التاريخ. أرسل مثلاً: "غداً" أو "2026-03-15"`);
         return;
       }
     }
 
     await pool.query(`UPDATE tasks SET ${field}=$1 WHERE id=$2`, [newValue, t.id]);
     const fieldNames = { title: 'العنوان', time: 'الوقت', date: 'التاريخ', note: 'الملاحظة', location: 'الموقع' };
-    await sendWA(from, `✅ تم تعديل ${fieldNames[field]} بنجاح!\n\n📌 *${field === 'title' ? newValue : t.title}*\n${field === 'time' ? `⏰ ${fmt12(newValue)}` : field === 'date' ? `📅 ${newValue}` : ''}`);
+    let reply = `✅ تم تعديل ${fieldNames[field]} بنجاح!\n\n📌 *${field === 'title' ? newValue : t.title}*`;
+    if (field === 'time') reply += `\n⏰ ${fmt12(newValue)}`;
+    if (field === 'date') reply += `\n📅 ${newValue}`;
+    await sendWA(from, reply);
     userState[from] = { step: 'idle' };
     return;
   }
@@ -303,12 +347,8 @@ app.post('/webhook', async (req, res) => {
       if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة حالياً ✅'); return; }
       if (result.rows.length === 1) {
         const t = result.rows[0];
-        const [h, m] = t.time.split(':').map(Number);
-        const d = new Date(); d.setHours(h + 1, m);
-        const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
-        sentReminders.delete(t.id);
-        await sendWA(from, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
+        userState[from] = { step: 'waiting_postpone_duration', task: t };
+        await sendWA(from, `⏰ *كم تريد تأجيل "${t.title}"؟*\n\n1. 15 دقيقة\n2. 30 دقيقة\n3. ساعة\n4. ساعتين\n5. أرسل عدد الدقائق يدوياً`);
         return;
       }
       let list = '⏰ *أي مهمة تريد تأجيلها؟*\n\n';
@@ -381,7 +421,7 @@ app.post('/webhook', async (req, res) => {
 
   // --- مساعدة ---
   if (msg === 'مساعدة' || msg === 'help') {
-    await sendWA(from, `📖 *أوامر مهامي:*\n\n• أرسل مهمة مثل: "اجتماع مع الفريق غداً الساعة 3"\n• *مهامي* - عرض المهام المعلقة\n• *منجز* - تحديد مهمة كمنجزة\n• *تأجيل* - تأجيل مهمة ساعة\n• *عدل* - تعديل مهمة\n• *احذف* - حذف مهمة\n• *مساعدة* - عرض هذه القائمة`);
+    await sendWA(from, `📖 *أوامر مهامي:*\n\n• أرسل مهمة مثل: "اجتماع مع الفريق غداً الساعة 3"\n• *مهامي* - عرض المهام المعلقة\n• *منجز* - تحديد مهمة كمنجزة\n• *تأجيل* - تأجيل مهمة (تختار المدة)\n• *عدل* - تعديل مهمة\n• *احذف* - حذف مهمة\n• *مساعدة* - عرض هذه القائمة`);
     return;
   }
 
@@ -390,14 +430,14 @@ app.post('/webhook', async (req, res) => {
   if (parsed && parsed.title) {
     if (!parsed.date || !parsed.time) {
       userState[from] = { step: 'waiting_datetime', taskTitle: parsed.title, taskType: parsed.type||'task', taskNote: parsed.note||'' };
-      let question = `${parsed.type === 'meeting' ? '📅' : parsed.type === 'reminder' ? '🔔' : '📌'} فهمت أنك تريد إضافة:\n*${parsed.title}*\n\n`;
+      const icon = parsed.type === 'meeting' ? '📅' : parsed.type === 'reminder' ? '🔔' : '📌';
+      let question = `${icon} فهمت أنك تريد إضافة:\n*${parsed.title}*\n\n`;
       if (!parsed.date && !parsed.time) question += `❓ متى وفي أي وقت؟\nمثال: "غداً الساعة 3 العصر"`;
       else if (!parsed.date) question += `❓ في أي يوم؟\nمثال: "غداً" أو "2026-03-15"`;
       else question += `❓ في أي وقت؟\nمثال: "الساعة 3 العصر"`;
       await sendWA(from, question);
       return;
     }
-    // كل المعلومات موجودة
     if (parsed.type === 'meeting') {
       userState[from] = { step: 'waiting_location', taskTitle: parsed.title, taskType: 'meeting', taskNote: parsed.note||'', date: parsed.date, time: parsed.time };
       await sendWA(from, `📍 أين موقع الاجتماع؟\nأرسل رابط قوقل ماب أو اسم المكان\nأو أرسل *تخطي* إذا لم يكن محدداً`);
