@@ -12,6 +12,7 @@ const PHONE    = '966563466639';
 const INSTANCE = 'instance165171';
 const TOKEN    = '79scxmp5uv1687hb';
 const API_URL  = `https://api.ultramsg.com/${INSTANCE}`;
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:gLAYYfVCLDpxMTsCirlWkplBaDYxqzvU@postgres.railway.internal:5432/railway',
@@ -73,6 +74,31 @@ function buildTaskMsg(t) {
   return msg;
 }
 
+async function parseTaskFromMessage(msg) {
+  try {
+    const todayISO = new Date().toISOString().split('T')[0];
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي:\n{"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD","time":"HH:MM","note":"ملاحظة اختيارية"}\n\nإذا لم يُذكر تاريخ فاستخدم اليوم. إذا لم يُذكر وقت فاستخدم "09:00".\nالأنواع: task=مهمة عامة، meeting=اجتماع، reminder=تذكير.\n\nالرسالة: "${msg}"`
+      }]
+    }, {
+      headers: {
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      }
+    });
+    const text = response.data.content[0].text.trim();
+    return JSON.parse(text);
+  } catch(e) {
+    console.error('AI Error:', e.message);
+    return null;
+  }
+}
+
 cron.schedule('* * * * *', async () => {
   const today = todayStr();
   const now = new Date();
@@ -95,24 +121,61 @@ app.post('/webhook', async (req, res) => {
   const msg  = body?.data?.body?.trim();
   const from = body?.data?.from;
   if (!msg || !from) return;
-  console.log(`📩 رد من واتساب: ${msg}`);
-  try {
-    const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date DESC, time DESC LIMIT 1');
-    const lastPending = result.rows[0];
-    if (!lastPending) return;
-    if (msg === 'منجز' || msg === 'تم' || msg === '1') {
-      await pool.query('UPDATE tasks SET done=true WHERE id=$1', [lastPending.id]);
-      await sendWA(PHONE, `✅ ممتاز عبدالعزيز!\n\n*${lastPending.title}* تم تحديدها كمنجزة 🎉`);
-    } else if (msg === 'تأجيل' || msg === '2') {
-      const [h, m] = lastPending.time.split(':').map(Number);
+  console.log(`📩 رسالة من واتساب: ${msg}`);
+
+  if (msg === 'منجز' || msg === 'تم' || msg === '1') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date DESC, time DESC LIMIT 1');
+      const t = result.rows[0];
+      if (!t) return;
+      await pool.query('UPDATE tasks SET done=true WHERE id=$1', [t.id]);
+      await sendWA(PHONE, `✅ ممتاز عبدالعزيز!\n\n*${t.title}* تم تحديدها كمنجزة 🎉`);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  if (msg === 'تأجيل' || msg === '2') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date DESC, time DESC LIMIT 1');
+      const t = result.rows[0];
+      if (!t) return;
+      const [h, m] = t.time.split(':').map(Number);
       const d = new Date();
       d.setHours(h + 1, m);
       const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-      await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, lastPending.id]);
-      sentReminders.delete(lastPending.id);
-      await sendWA(PHONE, `⏰ تم تأجيل *${lastPending.title}* لـ ${fmt12(newTime)}`);
-    }
-  } catch(e) { console.error('Webhook error:', e.message); }
+      await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
+      sentReminders.delete(t.id);
+      await sendWA(PHONE, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  if (msg === 'مهامي' || msg === 'قائمة') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 5');
+      if (result.rows.length === 0) {
+        await sendWA(PHONE, '📋 لا توجد مهام معلقة حالياً ✅');
+        return;
+      }
+      let list = '📋 *مهامك المعلقة:*\n\n';
+      result.rows.forEach((t, i) => {
+        list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`;
+      });
+      await sendWA(PHONE, list);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  const parsed = await parseTaskFromMessage(msg);
+  if (parsed && parsed.title) {
+    try {
+      const id = Date.now();
+      await pool.query('INSERT INTO tasks (id, title, type, date, time, note) VALUES ($1,$2,$3,$4,$5,$6)',
+        [id, parsed.title, parsed.type||'task', parsed.date, parsed.time, parsed.note||'']);
+      await sendWA(PHONE, `✅ تم تسجيل المهمة!\n\n📌 *${parsed.title}*\n⏰ ${fmt12(parsed.time)}\n📅 ${parsed.date}\n\nسأذكرك في الوقت المحدد 🔔`);
+      console.log(`✨ مهمة جديدة من واتساب: ${parsed.title}`);
+    } catch(e) { console.error(e.message); }
+  }
 });
 
 app.get('/tasks', async (req, res) => {
