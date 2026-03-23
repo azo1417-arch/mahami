@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const cron = require('node-cron');
 const axios = require('axios');
@@ -7,6 +8,7 @@ const app = express();
 app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.header('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');res.header('Access-Control-Allow-Headers','Content-Type');if(req.method==='OPTIONS')return res.sendStatus(200);next();});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const PHONE    = '966563466639';
 const INSTANCE = 'instance165171';
@@ -584,19 +586,46 @@ app.post('/tasks/:id/send', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/', (req, res) => {
-  res.json({ status: '🟢 مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
-});
+app.get('/', (req, res) => res.redirect('/dashboard.html'));
+
+// ===== تسجيل الـ webhook في UltraMsg تلقائياً =====
+async function registerWebhook(selfUrl) {
+  try {
+    const webhookUrl = `${selfUrl}/webhook`;
+
+    // اقرأ الـ webhook الحالي
+    const check = await axios.get(`${API_URL}/instance/settings`, {
+      params: { token: TOKEN }
+    });
+    const current = check.data?.webhookUrl || check.data?.webhook || '';
+
+    if (current === webhookUrl) {
+      console.log(`✅ Webhook مسجل مسبقاً: ${webhookUrl}`);
+      return;
+    }
+
+    // سجّل الـ webhook الجديد
+    await axios.post(`${API_URL}/instance/settings`, null, {
+      params: { token: TOKEN, webhookUrl }
+    });
+    console.log(`🔗 تم تسجيل Webhook: ${webhookUrl}`);
+  } catch(e) {
+    console.error('⚠️ فشل تسجيل Webhook:', e.message);
+  }
+}
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 مهامي سيرفر شغّال على port ${PORT}`);
 
-  // ===== Self-ping كل 10 دقايق حتى ما ينام السيرفر =====
   const SELF_URL = process.env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
     : `http://localhost:${PORT}`;
 
+  // سجّل الـ webhook فوراً عند بدء التشغيل
+  await registerWebhook(SELF_URL);
+
+  // ===== Self-ping كل 10 دقايق حتى ما ينام السيرفر =====
   cron.schedule('*/10 * * * *', async () => {
     try {
       await axios.get(SELF_URL);
@@ -605,4 +634,7 @@ app.listen(PORT, () => {
       console.log('💓 self-ping failed:', e.message);
     }
   });
+
+  // أعد تسجيل الـ webhook كل ساعة احتياطياً
+  cron.schedule('0 * * * *', () => registerWebhook(SELF_URL));
 });
