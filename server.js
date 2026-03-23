@@ -1,4 +1,3 @@
-const path = require('path');
 const express = require('express');
 const cron = require('node-cron');
 const axios = require('axios');
@@ -8,11 +7,10 @@ const app = express();
 app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.header('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');res.header('Access-Control-Allow-Headers','Content-Type');if(req.method==='OPTIONS')return res.sendStatus(200);next();});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
 
 const PHONE    = '966563466639';
-const INSTANCE = 'instance165171';
-const TOKEN    = '79scxmp5uv1687hb';
+const INSTANCE = 'instance165167';
+const TOKEN    = 't2i3ustg3svr28yr';
 const API_URL  = `https://api.ultramsg.com/${INSTANCE}`;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
@@ -43,22 +41,6 @@ initDB();
 let sentReminders = new Set();
 const userState = {};
 
-// ذاكرة المحادثة: آخر 10 رسائل لكل مستخدم
-const conversationHistory = {};
-
-function addToHistory(from, role, content) {
-  if (!conversationHistory[from]) conversationHistory[from] = [];
-  conversationHistory[from].push({ role, content });
-  // احتفظ بآخر 10 رسائل فقط (5 من كل طرف)
-  if (conversationHistory[from].length > 10) {
-    conversationHistory[from] = conversationHistory[from].slice(-10);
-  }
-}
-
-function getHistory(from) {
-  return conversationHistory[from] || [];
-}
-
 async function sendWA(to, message) {
   try {
     await axios.post(`${API_URL}/messages/chat`, null, {
@@ -76,20 +58,12 @@ function fmt12(time24) {
 }
 
 function todayStr() {
-  // التاريخ بتوقيت الرياض (UTC+3)
-  const now = new Date();
-  const riyadh = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-  return riyadh.toISOString().split('T')[0];
-}
-
-function nowRiyadh() {
-  const now = new Date();
-  return new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  return new Date().toISOString().split('T')[0];
 }
 
 function buildTaskMsg(t) {
   const icons = { meeting: '📅 اجتماع', task: '✅ مهمة', reminder: '🔔 تذكير' };
-  const h = nowRiyadh().getHours();
+  const h = new Date().getHours();
   const gr = h < 12 ? 'صباح الخير' : h < 17 ? 'مساء الخير' : 'مساء النور';
   let msg = `${gr} عبدالعزيز 🌟\n\n`;
   msg += `${icons[t.type] || '📌 مهمة'}\n`;
@@ -104,122 +78,23 @@ function buildTaskMsg(t) {
   return msg;
 }
 
-// ===== دالة الذكاء الاصطناعي الرئيسية - مع سياق + تواريخ عربية + محادثة طبيعية =====
-async function claudeSmartReply(from, userMsg, tasks) {
-  try {
-    const now = nowRiyadh();
-    const todayISO = todayStr();
-    const dayNames = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
-    const todayName = dayNames[now.getDay()];
-    const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
-    const tasksList = tasks.length > 0
-      ? tasks.map(t => `- ${t.title} (${t.type}) | ${t.date} | ${fmt12(t.time)}${t.location ? ' | ' + t.location : ''}`).join('\n')
-      : 'لا توجد مهام معلقة';
-
-    const systemPrompt = `أنت مساعد ذكي اسمك "مهامي" تساعد عبدالعزيز في إدارة مهامه عبر واتساب.
-
-📅 معلومات الوقت الآن:
-- اليوم: ${todayName} ${todayISO}
-- الوقت الحالي: ${currentTime} (توقيت الرياض)
-
-📋 المهام المعلقة حالياً:
-${tasksList}
-
-🎯 مهمتك:
-أنت تفهم الرسائل العربية الطبيعية وترد بذكاء. حدد نية المستخدم وأعد JSON فقط بهذا الشكل:
-
-{
-  "intent": "add_task | complete_task | postpone_task | delete_task | edit_task | list_tasks | chat | help",
-  "reply": "ردك الطبيعي بالعربي هنا",
-  "task": {
-    "title": "عنوان المهمة",
-    "type": "task | meeting | reminder",
-    "date": "YYYY-MM-DD أو null",
-    "time": "HH:MM أو null",
-    "note": "ملاحظة أو فارغة",
-    "location": "موقع أو فارغ"
-  }
-}
-
-📌 قواعد التواريخ (عربية وميلادية):
-- "بكرة" أو "غداً" = ${new Date(now.getTime() + 24*60*60*1000).toISOString().split('T')[0]}
-- "بعد كم" أو "الأسبوع الجاي" = ${new Date(now.getTime() + 7*24*60*60*1000).toISOString().split('T')[0]}
-- "بعد ثلاثين دقيقة" أو "بعد نص ساعة" = احسب من ${currentTime}
-- أيام الأسبوع: إذا قال "الخميس" ابحث عن أقرب خميس قادم
-- "الصبح" = 08:00، "الضحى" = 10:00، "الظهر" = 12:00، "العصر" = 15:30، "المغرب" = 18:30، "العشاء" = 20:00
-- تواريخ ميلادية: "25/3" أو "25-3" أو "25 مارس" أو "March 25" أو "3/25" = ${now.getFullYear()}-03-25 (السنة الحالية ${now.getFullYear()} إذا لم تُذكر)
-- إذا ذُكر تاريخ كامل مثل "2026-05-10" أو "10/5/2026" استخدمه مباشرة
-
-📌 قواعد النوع:
-- اجتماع/لقاء/مقابلة → meeting
-- تذكير/ذكرني → reminder
-- غير ذلك → task
-
-📌 قواعد النية:
-- إذا كانت رسالة عادية غير مرتبطة بالمهام → intent: "chat" وارد بشكل طبيعي
-- إذا طلب قائمة مهامه → intent: "list_tasks"
-- إذا أراد إضافة مهمة → intent: "add_task"
-
-مهم: أعد JSON فقط بدون أي نص خارجه أو markdown.`;
-
-    const history = getHistory(from);
-    const messages = [
-      ...history,
-      { role: 'user', content: userMsg }
-    ];
-
-    const response = await axios.post('https://api.anthropic.com/v1/messages', {
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 800,
-      system: systemPrompt,
-      messages
-    }, {
-      headers: {
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      }
-    });
-
-    const text = response.data.content[0].text.trim().replace(/```json|```/g, '').trim();
-    const result = JSON.parse(text);
-
-    // احفظ في السياق
-    addToHistory(from, 'user', userMsg);
-    addToHistory(from, 'assistant', result.reply || '');
-
-    return result;
-  } catch(e) {
-    console.error('Claude Error:', e.message);
-    return null;
-  }
-}
-
-// ===== دالة استخراج المهمة (للاستخدام في خطوات الانتظار) =====
 async function parseTaskFromMessage(msg) {
   try {
-    const now = nowRiyadh();
-    const todayISO = todayStr();
-    const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
+    const todayISO = new Date().toISOString().split('T')[0];
     const response = await axios.post('https://api.anthropic.com/v1/messages', {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
       messages: [{
         role: 'user',
-        content: `اليوم هو ${todayISO} والوقت الحالي ${currentTime} (توقيت الرياض).
+        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:
+{"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":"ملاحظة أو فارغة"}
 
-استخرج معلومات المهمة وأعد JSON فقط:
-{"title":"عنوان","type":"task|meeting|reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":""}
+قواعد تحديد النوع:
+- إذا ذكر كلمة اجتماع أو meeting أو لقاء أو مقابلة → type: meeting
+- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder  
+- غير ذلك → type: task
 
-قواعد التواريخ (عربية وميلادية):
-- "بكرة/غداً" = ${new Date(now.getTime() + 24*60*60*1000).toISOString().split('T')[0]}
-- "بعد X دقيقة/ساعة" = احسب من الوقت الحالي ${currentTime}
-- "الصبح"=08:00, "الضحى"=10:00, "الظهر"=12:00, "العصر"=15:30, "المغرب"=18:30, "العشاء"=20:00
-- تواريخ ميلادية مختصرة مثل "25/3" أو "25 مارس" أو "March 25" = السنة الحالية ${now.getFullYear()} مع الشهر واليوم
-- تاريخ كامل مثل "2026-05-10" أو "10/5/2026" استخدمه مباشرة
-- اجتماع/لقاء/مقابلة → meeting, تذكير/ذكرني → reminder, غير ذلك → task
+مهم: إذا لم يُذكر تاريخ اجعل date: null. إذا لم يُذكر وقت اجعل time: null.
 
 الرسالة: "${msg}"`
       }]
@@ -238,10 +113,9 @@ async function parseTaskFromMessage(msg) {
   }
 }
 
-// ===== CRON: إرسال التذكيرات =====
 cron.schedule('* * * * *', async () => {
   const today = todayStr();
-  const now = nowRiyadh();
+  const now = new Date();
   const cur = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   try {
     const res = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 AND time=$2', [today, cur]);
@@ -255,19 +129,29 @@ cron.schedule('* * * * *', async () => {
   } catch(e) { console.error('Cron error:', e.message); }
 });
 
-// ===== WEBHOOK: معالجة رسائل واتساب =====
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
+
+  // تجاهل كل شيء غير استقبال رسالة
+  if (body?.event_type && body.event_type !== 'message_received') return;
+
+  // تجاهل رسائل البوت نفسه
+  const fromMe = body?.data?.fromMe;
+  if (fromMe === true || fromMe === 'true' || fromMe === 1) return;
+
+  // نصية فقط
+  if (body?.data?.type && body.data.type !== 'chat') return;
+
   const msg  = body?.data?.body?.trim();
   const from = body?.data?.from;
   if (!msg || !from) return;
-  console.log(`📩 رسالة: ${msg}`);
+
+  console.log(`📩 رسالة من واتساب [${from}]: ${msg}`);
 
   const state = userState[from] || { step: 'idle' };
 
-  // ===== خطوات الانتظار (لا تمر على AI الرئيسي) =====
-
+  // --- انتظار الوقت والتاريخ ---
   if (state.step === 'waiting_datetime') {
     const parsed = await parseTaskFromMessage(`${state.taskTitle} ${msg}`);
     if (parsed && parsed.date && parsed.time) {
@@ -282,11 +166,12 @@ app.post('/webhook', async (req, res) => {
         userState[from] = { step: 'idle' };
       }
     } else {
-      await sendWA(from, `❓ ما فهمت الوقت. جرب مثلاً:\n"بكرة العصر"\n"الخميس الساعة 10 الصبح"\n"بعد ساعتين"`);
+      await sendWA(from, `❓ لم أفهم الوقت والتاريخ. أرسل مثلاً:\n"غداً الساعة 3 العصر"\n"2026-03-14 15:00"`);
     }
     return;
   }
 
+  // --- انتظار الموقع ---
   if (state.step === 'waiting_location') {
     const location = msg === 'تخطي' ? '' : msg;
     const id = Date.now();
@@ -300,6 +185,7 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
+  // --- انتظار اختيار المهمة المنجزة ---
   if (state.step === 'waiting_done_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -308,28 +194,31 @@ app.post('/webhook', async (req, res) => {
       await sendWA(from, `✅ ممتاز عبدالعزيز!\n\n*${t.title}* تم تحديدها كمنجزة 🎉`);
       userState[from] = { step: 'idle' };
     } else {
-      await sendWA(from, `❓ أرسل رقم المهمة فقط`);
+      await sendWA(from, `❓ أرسل رقم المهمة فقط من القائمة`);
     }
     return;
   }
 
+  // --- انتظار اختيار المهمة للتأجيل ---
   if (state.step === 'waiting_postpone_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
       const t = state.tasks[num - 1];
       const [h, m] = t.time.split(':').map(Number);
-      const d = new Date(); d.setHours(h + 1, m);
+      const d = new Date();
+      d.setHours(h + 1, m);
       const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
       await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
       sentReminders.delete(t.id);
       await sendWA(from, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
       userState[from] = { step: 'idle' };
     } else {
-      await sendWA(from, `❓ أرسل رقم المهمة فقط`);
+      await sendWA(from, `❓ أرسل رقم المهمة فقط من القائمة`);
     }
     return;
   }
 
+  // --- انتظار اختيار المهمة للحذف ---
   if (state.step === 'waiting_delete_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -339,11 +228,12 @@ app.post('/webhook', async (req, res) => {
       await sendWA(from, `🗑️ تم حذف *${t.title}* بنجاح`);
       userState[from] = { step: 'idle' };
     } else {
-      await sendWA(from, `❓ أرسل رقم المهمة فقط`);
+      await sendWA(from, `❓ أرسل رقم المهمة فقط من القائمة`);
     }
     return;
   }
 
+  // --- انتظار اختيار المهمة للتعديل ---
   if (state.step === 'waiting_edit_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -354,16 +244,17 @@ app.post('/webhook', async (req, res) => {
       opts += `\n\nأرسل الرقم فقط`;
       await sendWA(from, opts);
     } else {
-      await sendWA(from, `❓ أرسل رقم صحيح`);
+      await sendWA(from, `❓ أرسل رقم المهمة فقط من القائمة`);
     }
     return;
   }
 
+  // --- انتظار اختيار الحقل للتعديل ---
   if (state.step === 'waiting_edit_field') {
     const num = parseInt(msg);
     const t = state.task;
     const fields = { 1: 'title', 2: 'time', 3: 'date', 4: 'note', 5: 'location' };
-    const labels = { 1: 'العنوان الجديد', 2: 'الوقت الجديد (مثال: العصر أو 15:00)', 3: 'التاريخ الجديد (مثال: بكرة أو 2026-03-15)', 4: 'الملاحظة الجديدة', 5: 'الموقع الجديد' };
+    const labels = { 1: 'العنوان الجديد', 2: 'الوقت الجديد (مثال: 3:00 م أو 15:00)', 3: 'التاريخ الجديد (مثال: غداً أو 2026-03-15)', 4: 'الملاحظة الجديدة', 5: 'الموقع الجديد (رابط قوقل ماب أو اسم المكان)' };
     if (fields[num] && (num !== 5 || t.type === 'meeting')) {
       userState[from] = { step: 'waiting_edit_value', task: t, field: fields[num] };
       await sendWA(from, `✏️ أرسل ${labels[num]}:`);
@@ -373,19 +264,22 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
+  // --- انتظار القيمة الجديدة للتعديل ---
   if (state.step === 'waiting_edit_value') {
     const t = state.task;
     const field = state.field;
     let newValue = msg;
+
     if (field === 'time' || field === 'date') {
       const parsed = await parseTaskFromMessage(`مهمة ${field === 'time' ? msg : 'في ' + msg}`);
       if (field === 'time' && parsed && parsed.time) newValue = parsed.time;
       else if (field === 'date' && parsed && parsed.date) newValue = parsed.date;
       else {
-        await sendWA(from, `❓ ما فهمت. جرب مثلاً:\n${field === 'time' ? '"العصر" أو "15:00" أو "بعد ساعة"' : '"بكرة" أو "الخميس" أو "2026-03-15"'}`);
+        await sendWA(from, `❓ لم أفهم. أرسل مثلاً:\n${field === 'time' ? '"الساعة 3 العصر" أو "15:00"' : '"غداً" أو "2026-03-15"'}`);
         return;
       }
     }
+
     await pool.query(`UPDATE tasks SET ${field}=$1 WHERE id=$2`, [newValue, t.id]);
     const fieldNames = { title: 'العنوان', time: 'الوقت', date: 'التاريخ', note: 'الملاحظة', location: 'الموقع' };
     await sendWA(from, `✅ تم تعديل ${fieldNames[field]} بنجاح!\n\n📌 *${field === 'title' ? newValue : t.title}*\n${field === 'time' ? `⏰ ${fmt12(newValue)}` : field === 'date' ? `📅 ${newValue}` : ''}`);
@@ -393,103 +287,78 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // ===== المعالج الذكي الرئيسي =====
-  try {
-    const tasksResult = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
-    const tasks = tasksResult.rows;
-
-    const aiResult = await claudeSmartReply(from, msg, tasks);
-
-    if (!aiResult) {
-      await sendWA(from, `❓ صارت مشكلة. جرب مرة ثانية أو أرسل *مساعدة*`);
-      return;
-    }
-
-    const { intent, reply, task } = aiResult;
-
-    // --- محادثة عادية ---
-    if (intent === 'chat') {
-      await sendWA(from, reply);
-      return;
-    }
-
-    // --- مساعدة ---
-    if (intent === 'help') {
-      await sendWA(from, `📖 *أوامر مهامي:*\n\n• أرسل أي مهمة بكلام عادي مثل:\n  "اجتماع مع الفريق بكرة العصر"\n  "ذكرني أدفع الفاتورة الخميس الصبح"\n\n• *مهامي* - عرض المهام المعلقة\n• *منجز* - تحديد مهمة كمنجزة\n• *تأجيل* - تأجيل مهمة ساعة\n• *عدل* - تعديل مهمة\n• *احذف* - حذف مهمة\n• *مساعدة* - عرض هذه القائمة\n\nبإمكانك تكلمني بشكل طبيعي 😊`);
-      return;
-    }
-
-    // --- قائمة المهام ---
-    if (intent === 'list_tasks') {
-      if (tasks.length === 0) { await sendWA(from, reply || '📋 لا توجد مهام معلقة حالياً ✅'); return; }
-      let list = '📋 *مهامك المعلقة:*\n\n';
-      tasks.forEach((t, i) => {
-        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
-        list += `${i+1}. ${icon} *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`;
-      });
-      await sendWA(from, list);
-      return;
-    }
-
-    // --- إنجاز مهمة ---
-    if (intent === 'complete_task') {
-      if (tasks.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة ✅'); return; }
-      if (tasks.length === 1) {
-        await pool.query('UPDATE tasks SET done=true WHERE id=$1', [tasks[0].id]);
-        await sendWA(from, `✅ ممتاز عبدالعزيز!\n\n*${tasks[0].title}* تم تحديدها كمنجزة 🎉`);
+  // --- منجز ---
+  if (msg === 'منجز' || msg === 'تم') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
+      if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة حالياً ✅'); return; }
+      if (result.rows.length === 1) {
+        const t = result.rows[0];
+        await pool.query('UPDATE tasks SET done=true WHERE id=$1', [t.id]);
+        await sendWA(from, `✅ ممتاز عبدالعزيز!\n\n*${t.title}* تم تحديدها كمنجزة 🎉`);
         return;
       }
       let list = '✅ *أي مهمة أنجزت؟*\n\n';
-      tasks.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
+      result.rows.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
       list += `أرسل الرقم فقط`;
       await sendWA(from, list);
-      userState[from] = { step: 'waiting_done_selection', tasks };
-      return;
-    }
+      userState[from] = { step: 'waiting_done_selection', tasks: result.rows };
+    } catch(e) { console.error(e.message); }
+    return;
+  }
 
-    // --- تأجيل مهمة ---
-    if (intent === 'postpone_task') {
-      if (tasks.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة ✅'); return; }
-      if (tasks.length === 1) {
-        const t = tasks[0];
+  // --- تأجيل ---
+  if (msg === 'تأجيل') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
+      if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة حالياً ✅'); return; }
+      if (result.rows.length === 1) {
+        const t = result.rows[0];
         const [h, m] = t.time.split(':').map(Number);
         const d = new Date(); d.setHours(h + 1, m);
         const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
         sentReminders.delete(t.id);
-        await sendWA(from, reply || `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
+        await sendWA(from, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
         return;
       }
       let list = '⏰ *أي مهمة تريد تأجيلها؟*\n\n';
-      tasks.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
+      result.rows.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
       list += `أرسل الرقم فقط`;
       await sendWA(from, list);
-      userState[from] = { step: 'waiting_postpone_selection', tasks };
-      return;
-    }
+      userState[from] = { step: 'waiting_postpone_selection', tasks: result.rows };
+    } catch(e) { console.error(e.message); }
+    return;
+  }
 
-    // --- حذف مهمة ---
-    if (intent === 'delete_task') {
-      if (tasks.length === 0) { await sendWA(from, '📋 لا توجد مهام لحذفها ✅'); return; }
-      if (tasks.length === 1) {
-        await pool.query('DELETE FROM tasks WHERE id=$1', [tasks[0].id]);
-        sentReminders.delete(tasks[0].id);
-        await sendWA(from, reply || `🗑️ تم حذف *${tasks[0].title}* بنجاح`);
+  // --- حذف ---
+  if (msg === 'احذف' || msg === 'حذف') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
+      if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام لحذفها ✅'); return; }
+      if (result.rows.length === 1) {
+        const t = result.rows[0];
+        await pool.query('DELETE FROM tasks WHERE id=$1', [t.id]);
+        sentReminders.delete(t.id);
+        await sendWA(from, `🗑️ تم حذف *${t.title}* بنجاح`);
         return;
       }
       let list = '🗑️ *أي مهمة تريد حذفها؟*\n\n';
-      tasks.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
+      result.rows.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
       list += `أرسل الرقم فقط`;
       await sendWA(from, list);
-      userState[from] = { step: 'waiting_delete_selection', tasks };
-      return;
-    }
+      userState[from] = { step: 'waiting_delete_selection', tasks: result.rows };
+    } catch(e) { console.error(e.message); }
+    return;
+  }
 
-    // --- تعديل مهمة ---
-    if (intent === 'edit_task') {
-      if (tasks.length === 0) { await sendWA(from, '📋 لا توجد مهام لتعديلها ✅'); return; }
-      if (tasks.length === 1) {
-        const t = tasks[0];
+  // --- تعديل ---
+  if (msg === 'عدل' || msg === 'تعديل') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
+      if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام لتعديلها ✅'); return; }
+      if (result.rows.length === 1) {
+        const t = result.rows[0];
         userState[from] = { step: 'waiting_edit_field', task: t };
         let opts = `✏️ *تعديل: ${t.title}*\n\nاختر ماذا تريد تعديله:\n\n1. العنوان\n2. الوقت\n3. التاريخ\n4. الملاحظة`;
         if (t.type === 'meeting') opts += `\n5. الموقع`;
@@ -498,49 +367,65 @@ app.post('/webhook', async (req, res) => {
         return;
       }
       let list = '✏️ *أي مهمة تريد تعديلها؟*\n\n';
-      tasks.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
+      result.rows.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
       list += `أرسل الرقم فقط`;
       await sendWA(from, list);
-      userState[from] = { step: 'waiting_edit_selection', tasks };
+      userState[from] = { step: 'waiting_edit_selection', tasks: result.rows };
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  // --- قائمة المهام ---
+  if (msg === 'مهامي' || msg === 'قائمة') {
+    try {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
+      if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة حالياً ✅'); return; }
+      let list = '📋 *مهامك المعلقة:*\n\n';
+      result.rows.forEach((t, i) => {
+        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
+        list += `${i+1}. ${icon} *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`;
+      });
+      await sendWA(from, list);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  // --- مساعدة ---
+  if (msg === 'مساعدة' || msg === 'help') {
+    await sendWA(from, `📖 *أوامر مهامي:*\n\n• أرسل مهمة مثل: "اجتماع مع الفريق غداً الساعة 3"\n• *مهامي* - عرض المهام المعلقة\n• *منجز* - تحديد مهمة كمنجزة\n• *تأجيل* - تأجيل مهمة ساعة\n• *عدل* - تعديل مهمة\n• *احذف* - حذف مهمة\n• *مساعدة* - عرض هذه القائمة`);
+    return;
+  }
+
+  // --- رسالة جديدة ---
+  const parsed = await parseTaskFromMessage(msg);
+  if (parsed && parsed.title) {
+    if (!parsed.date || !parsed.time) {
+      userState[from] = { step: 'waiting_datetime', taskTitle: parsed.title, taskType: parsed.type||'task', taskNote: parsed.note||'' };
+      let question = `${parsed.type === 'meeting' ? '📅' : parsed.type === 'reminder' ? '🔔' : '📌'} فهمت أنك تريد إضافة:\n*${parsed.title}*\n\n`;
+      if (!parsed.date && !parsed.time) question += `❓ متى وفي أي وقت؟\nمثال: "غداً الساعة 3 العصر"`;
+      else if (!parsed.date) question += `❓ في أي يوم؟\nمثال: "غداً" أو "2026-03-15"`;
+      else question += `❓ في أي وقت؟\nمثال: "الساعة 3 العصر"`;
+      await sendWA(from, question);
       return;
     }
-
-    // --- إضافة مهمة جديدة ---
-    if (intent === 'add_task' && task && task.title) {
-      if (!task.date || !task.time) {
-        userState[from] = { step: 'waiting_datetime', taskTitle: task.title, taskType: task.type||'task', taskNote: task.note||'' };
-        const icon = task.type === 'meeting' ? '📅' : task.type === 'reminder' ? '🔔' : '📌';
-        let question = `${icon} فاهم إنك تبي تضيف:\n*${task.title}*\n\n`;
-        if (!task.date && !task.time) question += `❓ متى وفي أي وقت؟\nمثال: "بكرة العصر" أو "الخميس الساعة 10"`;
-        else if (!task.date) question += `❓ في أي يوم؟`;
-        else question += `❓ في أي وقت؟`;
-        await sendWA(from, question);
-        return;
-      }
-      if (task.type === 'meeting') {
-        userState[from] = { step: 'waiting_location', taskTitle: task.title, taskType: 'meeting', taskNote: task.note||'', date: task.date, time: task.time };
-        await sendWA(from, `📍 أين موقع الاجتماع؟\nأرسل رابط قوقل ماب أو اسم المكان\nأو أرسل *تخطي* إذا لم يكن محدداً`);
-      } else {
+    if (parsed.type === 'meeting') {
+      userState[from] = { step: 'waiting_location', taskTitle: parsed.title, taskType: 'meeting', taskNote: parsed.note||'', date: parsed.date, time: parsed.time };
+      await sendWA(from, `📍 أين موقع الاجتماع؟\nأرسل رابط قوقل ماب أو اسم المكان\nأو أرسل *تخطي* إذا لم يكن محدداً`);
+    } else {
+      try {
         const id = Date.now();
         await pool.query('INSERT INTO tasks (id, title, type, date, time, note, location) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-          [id, task.title, task.type||'task', task.date, task.time, task.note||'', task.location||'']);
-        const icon = task.type === 'reminder' ? '🔔' : '✅';
-        await sendWA(from, reply || `${icon} تم تسجيل ${task.type === 'reminder' ? 'التذكير' : 'المهمة'}!\n\n📌 *${task.title}*\n⏰ ${fmt12(task.time)}\n📅 ${task.date}\n\nسأذكرك في الوقت المحدد 🔔`);
-        console.log(`✨ ${task.type} جديد: ${task.title}`);
-      }
-      return;
+          [id, parsed.title, parsed.type||'task', parsed.date, parsed.time, parsed.note||'', '']);
+        const icon = parsed.type === 'reminder' ? '🔔' : '✅';
+        await sendWA(from, `${icon} تم تسجيل ${parsed.type === 'reminder' ? 'التذكير' : 'المهمة'}!\n\n📌 *${parsed.title}*\n⏰ ${fmt12(parsed.time)}\n📅 ${parsed.date}\n\nسأذكرك في الوقت المحدد 🔔`);
+        console.log(`✨ ${parsed.type} جديد: ${parsed.title}`);
+      } catch(e) { console.error(e.message); }
     }
-
-    // fallback
-    await sendWA(from, reply || `❓ ما فهمت. أرسل *مساعدة* لعرض الأوامر`);
-
-  } catch(e) {
-    console.error('Webhook error:', e.message);
-    await sendWA(from, `❓ صارت مشكلة تقنية. جرب مرة ثانية`);
+  } else {
+    await sendWA(from, `❓ لم أفهم رسالتك.\n\nأرسل *مساعدة* لعرض الأوامر المتاحة`);
   }
 });
 
-// ===== REST API =====
 app.get('/tasks', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM tasks ORDER BY date, time');
@@ -586,55 +471,9 @@ app.post('/tasks/:id/send', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/', (req, res) => res.redirect('/dashboard.html'));
-
-// ===== تسجيل الـ webhook في UltraMsg تلقائياً =====
-async function registerWebhook(selfUrl) {
-  try {
-    const webhookUrl = `${selfUrl}/webhook`;
-
-    // اقرأ الـ webhook الحالي
-    const check = await axios.get(`${API_URL}/instance/settings`, {
-      params: { token: TOKEN }
-    });
-    const current = check.data?.webhookUrl || check.data?.webhook || '';
-
-    if (current === webhookUrl) {
-      console.log(`✅ Webhook مسجل مسبقاً: ${webhookUrl}`);
-      return;
-    }
-
-    // سجّل الـ webhook الجديد
-    await axios.post(`${API_URL}/instance/settings`, null, {
-      params: { token: TOKEN, webhookUrl }
-    });
-    console.log(`🔗 تم تسجيل Webhook: ${webhookUrl}`);
-  } catch(e) {
-    console.error('⚠️ فشل تسجيل Webhook:', e.message);
-  }
-}
+app.get('/', (req, res) => {
+  res.json({ status: '🟢 مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
+});
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`🚀 مهامي سيرفر شغّال على port ${PORT}`);
-
-  const SELF_URL = process.env.RAILWAY_PUBLIC_DOMAIN
-    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-    : `http://localhost:${PORT}`;
-
-  // سجّل الـ webhook فوراً عند بدء التشغيل
-  await registerWebhook(SELF_URL);
-
-  // ===== Self-ping كل 10 دقايق حتى ما ينام السيرفر =====
-  cron.schedule('*/10 * * * *', async () => {
-    try {
-      await axios.get(SELF_URL);
-      console.log('💓 self-ping OK');
-    } catch(e) {
-      console.log('💓 self-ping failed:', e.message);
-    }
-  });
-
-  // أعد تسجيل الـ webhook كل ساعة احتياطياً
-  cron.schedule('0 * * * *', () => registerWebhook(SELF_URL));
-});
+app.listen(PORT, () => console.log(`🚀 مهامي سيرفر شغّال على port ${PORT}`));
