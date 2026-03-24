@@ -40,6 +40,7 @@ initDB();
 
 let sentReminders = new Set();
 const userState = {};
+const chatHistory = {};
 
 async function sendWA(to, message) {
   try {
@@ -86,7 +87,7 @@ async function parseTaskFromMessage(msg) {
       max_tokens: 500,
       messages: [{
         role: 'user',
-        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:\n{"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":"ملاحظة أو فارغة"}\n\nقواعد تحديد النوع:\n- إذا ذكر كلمة اجتماع أو meeting أو لقاء أو مقابلة → type: meeting\n- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder\n- غير ذلك → type: task\n\nمهم: إذا لم يُذكر تاريخ اجعل date: null. إذا لم يُذكر وقت اجعل time: null.\n\nالرسالة: "${msg}"`
+        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:\n{"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":"ملاحظة أو فارغة"}\n\nقواعد تحديد النوع:\n- إذا ذكر كلمة اجتماع أو meeting أو لقاء أو مقابلة → type: meeting\n- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder\n- غير ذلك → type: task\n\nمهم: إذا لم يُذكر تاريخ اجعل date: null. إذا لم يُذكر وقت اجعل time: null.\nإذا كانت الرسالة دردشة عادية أو سؤال وليست مهمة، أعد: {"title":null}\n\nالرسالة: "${msg}"`
       }]
     }, {
       headers: {
@@ -100,6 +101,42 @@ async function parseTaskFromMessage(msg) {
   } catch(e) {
     console.error('AI Error:', e.message);
     return null;
+  }
+}
+
+async function chatWithAI(from, msg) {
+  try {
+    // احتفظ بآخر 10 رسائل فقط
+    if (!chatHistory[from]) chatHistory[from] = [];
+    chatHistory[from].push({ role: 'user', content: msg });
+    if (chatHistory[from].length > 20) chatHistory[from] = chatHistory[from].slice(-20);
+
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      system: `أنت مساعد شخصي احترافي لعبدالعزيز، تتواصل معه عبر واتساب.
+شخصيتك: رسمي، محترف، دقيق، موجز في ردودك.
+اسمك: مهامي.
+مهامك الأساسية: إدارة مهام وتذكيرات واجتماعات عبدالعزيز.
+يمكنك الدردشة والإجابة على أسئلته بأسلوب احترافي.
+اليوم هو ${todayStr()}.
+الردود يجب أن تكون باللغة العربية دائماً وموجزة ومفيدة.
+لا تذكر أنك نموذج ذكاء اصطناعي أو Claude، أنت فقط "مهامي".`,
+      messages: chatHistory[from]
+    }, {
+      headers: {
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      }
+    });
+
+    const reply = response.data.content[0].text.trim();
+    chatHistory[from].push({ role: 'assistant', content: reply });
+    return reply;
+  } catch(e) {
+    console.error('Chat AI Error:', e.message);
+    return `عذراً، حدث خطأ. أرسل *مساعدة* لعرض الأوامر المتاحة.`;
   }
 }
 
@@ -367,8 +404,11 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
+  // --- تحليل الرسالة: مهمة أم دردشة؟ ---
   const parsed = await parseTaskFromMessage(msg);
-  if (parsed && parsed.title) {
+
+  if (parsed && parsed.title && parsed.title !== null) {
+    // رسالة مهمة
     if (!parsed.date || !parsed.time) {
       userState[from] = { step: 'waiting_datetime', taskTitle: parsed.title, taskType: parsed.type||'task', taskNote: parsed.note||'' };
       let question = `${parsed.type === 'meeting' ? '📅' : parsed.type === 'reminder' ? '🔔' : '📌'} فهمت أنك تريد إضافة:\n*${parsed.title}*\n\n`;
@@ -392,7 +432,9 @@ app.post('/webhook', async (req, res) => {
       } catch(e) { console.error(e.message); }
     }
   } else {
-    await sendWA(from, `❓ لم أفهم رسالتك.\n\nأرسل *مساعدة* لعرض الأوامر المتاحة`);
+    // دردشة عادية
+    const reply = await chatWithAI(from, msg);
+    await sendWA(from, reply);
   }
 });
 
