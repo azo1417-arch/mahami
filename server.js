@@ -10,8 +10,8 @@ app.use(express.urlencoded({ extended: true }));
 
 // ─── الإعدادات ─────────────────────────────────────────────────────────────
 const OWNER_PHONE = '966563466639';
-const INSTANCE    = 'instance165171';
-const TOKEN       = '79scxmp5uv1687hb';
+const INSTANCE    = 'instance165167';
+const TOKEN       = 't2i3ustg3svr28yr';
 const API_URL     = `https://api.ultramsg.com/${INSTANCE}`;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
