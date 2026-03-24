@@ -650,6 +650,82 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
+
+  // ✅ مشاركة المهام — انتظار الرقم
+  if (owner && state.step === 'waiting_share_phone') {
+    const phone = msg.replace(/[^0-9]/g, '');
+    if (phone.length < 9) {
+      await sendWA(from, `❓ رقم غير صحيح. أرسل رقم واتساب كامل مثل: 966501234567`);
+      return;
+    }
+    await setState(from, { ...state, step: 'waiting_share_type', sharePhone: phone });
+    await sendWA(from, `📤 شاركة المهام مع ${phone}
+
+ماذا تريد تشارك؟
+
+1. مهام اليوم فقط
+2. مهام الغد
+3. مهام الأسبوع
+4. كل المهام المعلقة
+
+أرسل الرقم`);
+    return;
+  }
+
+  // انتظار نوع المشاركة
+  if (owner && state.step === 'waiting_share_type') {
+    const num = parseInt(msg);
+    if (isNaN(num) || num < 1 || num > 4) {
+      await sendWA(from, `❓ أرسل رقم من 1 إلى 4`);
+      return;
+    }
+
+    const today = todayStr();
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    const weekLater = new Date(Date.now() + 7*86400000).toISOString().split('T')[0];
+
+    let tasks, label;
+    if (num === 1) {
+      tasks = (await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [today])).rows;
+      label = `مهام اليوم (${today})`;
+    } else if (num === 2) {
+      tasks = (await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [tomorrow])).rows;
+      label = `مهام الغد (${tomorrow})`;
+    } else if (num === 3) {
+      tasks = (await pool.query('SELECT * FROM tasks WHERE done=false AND date>=$1 AND date<=$2 ORDER BY date,time', [today, weekLater])).rows;
+      label = `مهام الأسبوع القادم`;
+    } else {
+      tasks = (await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 20')).rows;
+      label = `كل المهام المعلقة`;
+    }
+
+    if (!tasks.length) {
+      await sendWA(from, `📋 لا توجد مهام لمشاركتها`);
+      await clearState(from);
+      return;
+    }
+
+    // بناء رسالة المشاركة
+    let shareMsg = `📋 *${label} — أ. عبدالعزيز:*
+
+`;
+    tasks.forEach((t, i) => {
+      const icon = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅';
+      const urgent = t.priority==='urgent'?' 🔴':'';
+      shareMsg += `${i+1}. ${icon}${urgent} *${t.title}*
+   ⏰ ${fmt12(t.time)} — ${t.date}
+
+`;
+    });
+    shareMsg += `_أُرسلت من مهامي_ ✨`;
+
+    await sendWA(state.sharePhone, shareMsg);
+    await sendWA(from, `✅ تم إرسال *${tasks.length}* مهام إلى ${state.sharePhone} 📤`);
+    console.log(`📤 مشاركة مهام مع ${state.sharePhone}: ${tasks.length} مهمة`);
+    await clearState(from);
+    return;
+  }
+
   // ✅ حالة انتظار توضيح من المستخدم
   if (state.step === 'waiting_clarification') {
     if (msg === 'نعم' || msg === 'أيوه' || msg === 'ايوه') {
@@ -982,9 +1058,20 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+    // ── مشاركة المهام ──
+    if (msg === 'شارك' || msg === 'مشاركة') {
+      await setState(from, { step: 'waiting_share_phone' });
+      await sendWA(from, `📤 *مشاركة المهام*
+
+أرسل رقم واتساب الشخص:
+مثال: 966501234567`);
+      return;
+    }
+
     // ── مساعدة ──
     if (msg === 'مساعدة' || msg === 'help') {
-      await sendWA(from, `📖 *أوامر مهامي:*\n\n*إضافة:*\n• "اجتماع مع الفريق غداً الساعة 3"\n• "ذكرني بالتقرير الساعة 5"\n• أضف "عاجل" للأولوية 🔴\n• "كل أحد الساعة 9 اجتماع الفريق" (متكرر)\n• *جدول [عنوان]* - جدولة ذكية بحسب الفراغ 🧠\n\n*عرض:*\n• *مهامي* - كل المهام\n• *اليوم* - مهام اليوم\n• *المنجزة* - المنجزة\n• *إحصائيات* - ملخص سريع\n• *بحث [كلمة]* - بحث\n• *دوام* - عرض ساعات الدوام\n\n*إجراءات:*\n• *منجز* / *تأجيل* / *عدل* / *احذف*\n• *إلغاء* - إلغاء أي عملية\n• *موافق [رقم]* / *رفض [رقم]* - طلبات المواعيد\n\n_تلخيص صباحي 8 ص_ 🌅 | _تقرير أسبوعي جمعة 5 م_ 📊`);
+      await sendWA(from, `📖 *أوامر مهامي:*\n\n*إضافة:*\n• "اجتماع مع الفريق غداً الساعة 3"\n• "ذكرني بالتقرير الساعة 5"\n• أضف "عاجل" للأولوية 🔴\n• "كل أحد الساعة 9 اجتماع الفريق" (متكرر)\n• *جدول [عنوان]* - جدولة ذكية بحسب الفراغ 🧠\n\n*عرض:*\n• *مهامي* - كل المهام\n• *اليوم* - مهام اليوم\n• *المنجزة* - المنجزة\n• *إحصائيات* - ملخص سريع\n• *بحث [كلمة]* - بحث\n• *دوام* - عرض ساعات الدوام\n\n*إجراءات:*\n• *منجز* / *تأجيل* / *عدل* / *احذف*\n• *إلغاء* - إلغاء أي عملية\n• *موافق [رقم]* / *رفض [رقم]* - طلبات المواعيد
+• *شارك* - مشاركة مهامك مع شخص 📤\n\n_تلخيص صباحي 8 ص_ 🌅 | _تقرير أسبوعي جمعة 5 م_ 📊`);
       return;
     }
   }
