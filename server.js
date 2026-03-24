@@ -8,10 +8,10 @@ app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.heade
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const PHONE    = '966563466639';
-const INSTANCE = 'instance165167';
-const TOKEN    = 't2i3ustg3svr28yr';
-const API_URL  = `https://api.ultramsg.com/${INSTANCE}`;
+const PHONE         = process.env.PHONE             || '966563466639';
+const INSTANCE      = process.env.ULTRAMSG_INSTANCE || 'instance165167';
+const TOKEN         = process.env.ULTRAMSG_TOKEN    || 't2i3ustg3svr28yr';
+const API_URL       = `https://api.ultramsg.com/${INSTANCE}`;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 const pool = new Pool({
@@ -86,17 +86,7 @@ async function parseTaskFromMessage(msg) {
       max_tokens: 500,
       messages: [{
         role: 'user',
-        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:
-{"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":"ملاحظة أو فارغة"}
-
-قواعد تحديد النوع:
-- إذا ذكر كلمة اجتماع أو meeting أو لقاء أو مقابلة → type: meeting
-- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder  
-- غير ذلك → type: task
-
-مهم: إذا لم يُذكر تاريخ اجعل date: null. إذا لم يُذكر وقت اجعل time: null.
-
-الرسالة: "${msg}"`
+        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:\n{"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":"ملاحظة أو فارغة"}\n\nقواعد تحديد النوع:\n- إذا ذكر كلمة اجتماع أو meeting أو لقاء أو مقابلة → type: meeting\n- إذا ذكر تذكير أو ذكرني أو reminder → type: reminder\n- غير ذلك → type: task\n\nمهم: إذا لم يُذكر تاريخ اجعل date: null. إذا لم يُذكر وقت اجعل time: null.\n\nالرسالة: "${msg}"`
       }]
     }, {
       headers: {
@@ -133,25 +123,21 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
 
-  // تجاهل كل شيء غير استقبال رسالة
   if (body?.event_type && body.event_type !== 'message_received') return;
 
-  // تجاهل رسائل البوت نفسه
   const fromMe = body?.data?.fromMe;
   if (fromMe === true || fromMe === 'true' || fromMe === 1) return;
 
-  // نصية فقط
   if (body?.data?.type && body.data.type !== 'chat') return;
 
   const msg  = body?.data?.body?.trim();
   const from = body?.data?.from;
   if (!msg || !from) return;
 
-  console.log(`📩 رسالة من واتساب [${from}]: ${msg}`);
+  console.log(`📩 رسالة [${from}]: ${msg}`);
 
   const state = userState[from] || { step: 'idle' };
 
-  // --- انتظار الوقت والتاريخ ---
   if (state.step === 'waiting_datetime') {
     const parsed = await parseTaskFromMessage(`${state.taskTitle} ${msg}`);
     if (parsed && parsed.date && parsed.time) {
@@ -171,7 +157,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار الموقع ---
   if (state.step === 'waiting_location') {
     const location = msg === 'تخطي' ? '' : msg;
     const id = Date.now();
@@ -185,7 +170,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار اختيار المهمة المنجزة ---
   if (state.step === 'waiting_done_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -199,7 +183,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار اختيار المهمة للتأجيل ---
   if (state.step === 'waiting_postpone_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -218,7 +201,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار اختيار المهمة للحذف ---
   if (state.step === 'waiting_delete_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -233,7 +215,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار اختيار المهمة للتعديل ---
   if (state.step === 'waiting_edit_selection') {
     const num = parseInt(msg);
     if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
@@ -249,12 +230,11 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار اختيار الحقل للتعديل ---
   if (state.step === 'waiting_edit_field') {
     const num = parseInt(msg);
     const t = state.task;
     const fields = { 1: 'title', 2: 'time', 3: 'date', 4: 'note', 5: 'location' };
-    const labels = { 1: 'العنوان الجديد', 2: 'الوقت الجديد (مثال: 3:00 م أو 15:00)', 3: 'التاريخ الجديد (مثال: غداً أو 2026-03-15)', 4: 'الملاحظة الجديدة', 5: 'الموقع الجديد (رابط قوقل ماب أو اسم المكان)' };
+    const labels = { 1: 'العنوان الجديد', 2: 'الوقت الجديد (مثال: 3:00 م أو 15:00)', 3: 'التاريخ الجديد (مثال: غداً أو 2026-03-15)', 4: 'الملاحظة الجديدة', 5: 'الموقع الجديد' };
     if (fields[num] && (num !== 5 || t.type === 'meeting')) {
       userState[from] = { step: 'waiting_edit_value', task: t, field: fields[num] };
       await sendWA(from, `✏️ أرسل ${labels[num]}:`);
@@ -264,12 +244,10 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- انتظار القيمة الجديدة للتعديل ---
   if (state.step === 'waiting_edit_value') {
     const t = state.task;
     const field = state.field;
     let newValue = msg;
-
     if (field === 'time' || field === 'date') {
       const parsed = await parseTaskFromMessage(`مهمة ${field === 'time' ? msg : 'في ' + msg}`);
       if (field === 'time' && parsed && parsed.time) newValue = parsed.time;
@@ -279,7 +257,6 @@ app.post('/webhook', async (req, res) => {
         return;
       }
     }
-
     await pool.query(`UPDATE tasks SET ${field}=$1 WHERE id=$2`, [newValue, t.id]);
     const fieldNames = { title: 'العنوان', time: 'الوقت', date: 'التاريخ', note: 'الملاحظة', location: 'الموقع' };
     await sendWA(from, `✅ تم تعديل ${fieldNames[field]} بنجاح!\n\n📌 *${field === 'title' ? newValue : t.title}*\n${field === 'time' ? `⏰ ${fmt12(newValue)}` : field === 'date' ? `📅 ${newValue}` : ''}`);
@@ -287,7 +264,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- منجز ---
   if (msg === 'منجز' || msg === 'تم') {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
@@ -307,7 +283,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- تأجيل ---
   if (msg === 'تأجيل') {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
@@ -331,7 +306,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- حذف ---
   if (msg === 'احذف' || msg === 'حذف') {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
@@ -352,7 +326,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- تعديل ---
   if (msg === 'عدل' || msg === 'تعديل') {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
@@ -375,7 +348,6 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- قائمة المهام ---
   if (msg === 'مهامي' || msg === 'قائمة') {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
@@ -390,13 +362,11 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- مساعدة ---
   if (msg === 'مساعدة' || msg === 'help') {
     await sendWA(from, `📖 *أوامر مهامي:*\n\n• أرسل مهمة مثل: "اجتماع مع الفريق غداً الساعة 3"\n• *مهامي* - عرض المهام المعلقة\n• *منجز* - تحديد مهمة كمنجزة\n• *تأجيل* - تأجيل مهمة ساعة\n• *عدل* - تعديل مهمة\n• *احذف* - حذف مهمة\n• *مساعدة* - عرض هذه القائمة`);
     return;
   }
 
-  // --- رسالة جديدة ---
   const parsed = await parseTaskFromMessage(msg);
   if (parsed && parsed.title) {
     if (!parsed.date || !parsed.time) {
