@@ -1517,6 +1517,10 @@ app.get('/free-slots/:date', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/dashboard', (req, res) => {
+  res.sendFile(__dirname + '/dashboard.html');
+});
+
 app.get('/', (req, res) => {
   res.json({ status: '🟢 مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
 });
