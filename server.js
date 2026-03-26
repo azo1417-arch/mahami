@@ -1,3 +1,6 @@
+// ✅ توقيت الرياض
+process.env.TZ = 'Asia/Riyadh';
+
 const express = require('express');
 const cron = require('node-cron');
 const axios = require('axios');
@@ -94,7 +97,7 @@ async function initDB() {
   `);
   await pool.query(`
     INSERT INTO working_hours (id, start_time, end_time, working_days, gap_minutes)
-    VALUES (1, '08:00', '17:00', '0,1,2,3,4', 60)
+    VALUES (1, '10:00', '18:00', '6,0,1,2,3,4', 60)
     ON CONFLICT (id) DO NOTHING
   `);
 
@@ -160,7 +163,11 @@ function fmt12(time24) {
   return `${h12}:${String(m).padStart(2,'0')} ${p}`;
 }
 
-function todayStr() { return new Date().toISOString().split('T')[0]; }
+function todayStr() {
+  const now = new Date();
+  const riyadh = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Riyadh' }));
+  return riyadh.toISOString().split('T')[0];
+}
 function normalizePhone(from) { return from.replace('@c.us','').replace('+',''); }
 function isOwner(from) { return normalizePhone(from) === normalizePhone(OWNER_PHONE); }
 
@@ -176,6 +183,76 @@ function buildOwnerTaskMsg(t, prefix = '') {
   return msg;
 }
 
+
+
+// ─── فهم مرن للأوامر ───────────────────────────────────────────────────────
+function detectCommand(msg) {
+  const m = msg.trim().toLowerCase();
+
+  // منجز
+  if (/^(منجز|تم|خلصت|انجزت|أنجزت|سويتها|خلصتها|تمت|done|انتهيت|انتهى)$/.test(m)) return 'done';
+
+  // تأجيل
+  if (/^(تأجيل|أجل|اجل|تاجيل|postpone|لاحقاً|بعدين|مو الحين)$/.test(m)) return 'postpone';
+
+  // حذف
+  if (/^(احذف|حذف|امسح|مسح|شيل|delete|ما ابيها|ما أبيها|أزل|ازل|remove)$/.test(m)) return 'delete';
+
+  // تعديل
+  if (/^(عدل|تعديل|غير|بدل|edit|update|عدله|غيره)$/.test(m)) return 'edit';
+
+  // مهامي
+  if (/^(مهامي|قائمة|قائمتي|وش عندي|شو عندي|list|المهام|مهام|tasks)$/.test(m)) return 'list';
+
+  // اليوم
+  if (/^(اليوم|يومي|مهام اليوم|شو اليوم|وش اليوم|today|ي)$/.test(m)) return 'today';
+
+  // المنجزة
+  if (/^(المنجزة|المنجزات|المكتملة|اللي خلصت|done tasks|انجزت|أنجزت وش)$/.test(m)) return 'completed';
+
+  // إحصائيات
+  if (/^(إحصائيات|احصائيات|إحصاء|احصاء|stats|تقرير|ملخص|كم عندي|إ)$/.test(m)) return 'stats';
+
+  // مساعدة
+  if (/^(مساعدة|مساعده|help|ساعدني|وش الأوامر|وش الاوامر|كيف|\?)$/.test(m)) return 'help';
+
+  // مشاركة
+  if (/^(شارك|مشاركة|مشاركه|شاركها|وزع|أرسل مهامي|ارسل مهامي|share)$/.test(m)) return 'share';
+
+  // دوام
+  if (/^(دوام|ساعات الدوام|ساعات العمل|working hours|وقت الدوام)$/.test(m)) return 'workhours';
+
+  // بحث
+  const searchMatch = m.match(/^(بحث|ابحث|دور على|search|فين|وين)\s+(.+)$/);
+  if (searchMatch) return `search:${searchMatch[2]}`;
+
+  // جدول
+  const schedMatch = m.match(/^(جدول|رتب موعد|حجز موعد|schedule)\s+(.+)$/);
+  if (schedMatch) return `schedule:${schedMatch[2]}`;
+
+  // تثبيت
+  if (/^(ثبت|pin|مهم جداً|الأهم)$/.test(m)) return 'pin';
+
+  // إيقاف التذكيرات
+  const muteMatch = m.match(/^(أوقف|اوقف|صامت|mute|ما ابي تذكيرات|لا تذكرني)\s*(.*)$/);
+  if (muteMatch) return `mute:${muteMatch[2]}`;
+
+  // وضع عدم الإزعاج
+  if (/^(عدم الإزعاج|dnd|لا تزعجني|وضع صامت)$/.test(m)) return 'dnd';
+
+  // تراجع
+  if (/^(تراجع|undo|رجع|رجوع|الغ اخر|ألغِ آخر)$/.test(m)) return 'undo';
+
+  // ملاحظة سريعة
+  const noteMatch = m.match(/^(سجل|ملاحظة|note|فكرة|اكتب)\s*[:\s]\s*(.+)$/);
+  if (noteMatch) return `note:${noteMatch[2]}`;
+
+  // ذكر شخص
+  const remindMatch = m.match(/^(ذكر|ذكّر)\s+(\d+)\s+(.+)$/);
+  if (remindMatch) return `remind_person:${remindMatch[2]}:${remindMatch[3]}`;
+
+  return null;
+}
 
 // ─── جدولة ذكية للاجتماعات ─────────────────────────────────────────────────
 
@@ -328,6 +405,39 @@ async function parseDatetime(msg) {
   } catch(e) { return null; }
 }
 
+
+// ─── تحويل الرسالة الصوتية لنص ────────────────────────────────────────────
+async function transcribeVoice(mediaUrl) {
+  try {
+    // تحميل الملف الصوتي
+    const response = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+    const audioBuffer = Buffer.from(response.data);
+    const base64Audio = audioBuffer.toString('base64');
+
+    // إرسال للـ Claude لتحليل الصوت (عبر Whisper-style prompt)
+    const result = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'هذه رسالة صوتية واتساب. المحتوى الصوتي غير متاح مباشرة، لكن المستخدم أرسل رسالة صوتية. أجب بـ: {"transcribed": false, "message": "عذراً، لا أقدر أسمع الرسائل الصوتية. أرسل رسالتك كنص"}'
+          }
+        ]
+      }]
+    }, {
+      headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    });
+
+    return null;
+  } catch(e) {
+    console.error('Voice error:', e.message);
+    return null;
+  }
+}
+
 // ─── AI: تحسين فهم الرسائل الغامضة ────────────────────────────────────────
 async function trySmartFallback(msg, from, owner) {
   try {
@@ -359,6 +469,19 @@ cron.schedule('* * * * *', async () => {
   const cur = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
   try {
+    // ✅ فحص وضع الصمت
+    let isMuted = false;
+    try {
+      const muteState = await pool.query("SELECT state FROM user_states WHERE phone=$1", [OWNER_PHONE + '_mute']);
+      if (muteState.rows.length) {
+        const muteUntil = new Date(muteState.rows[0].state.until);
+        if (new Date() < muteUntil) isMuted = true;
+        else await pool.query("DELETE FROM user_states WHERE phone=$1", [OWNER_PHONE + '_mute']);
+      }
+    } catch(e) {}
+
+    if (isMuted) return;
+
     // تذكيرات عبدالعزيز
     const ownerTasks = await pool.query(
       'SELECT * FROM tasks WHERE done=false AND date=$1 AND time=$2', [today, cur]
@@ -514,6 +637,23 @@ app.post('/webhook', async (req, res) => {
   if (!msg || !from) return;
 
   const owner = isOwner(from);
+
+  // ✅ كشف الرسائل الصوتية
+  const msgType = body?.data?.type;
+  if (msgType === 'audio' || msgType === 'ptt') {
+    console.log(`🎙️ رسالة صوتية من ${normalizePhone(from)}`);
+    await sendWA(from, `🎙️ استلمت رسالتك الصوتية!
+
+حالياً البوت يدعم النصوص فقط.
+
+أرسل رسالتك كنص مثل:
+• "اجتماع مع الفريق غداً الساعة 3"
+• "ذكرني بالتقرير الساعة 5"
+
+أو أرسل *مساعدة* للأوامر 📖`);
+    return;
+  }
+
   console.log(`📩 ${owner ? '👑 المالك' : '👤 زائر'} [${normalizePhone(from)}]: ${msg}`);
 
   const state = await getState(from);
@@ -726,6 +866,19 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
+
+  // تثبيت مهمة
+  if (owner && state.step === 'waiting_pin_selection') {
+    const num = parseInt(msg);
+    if (!isNaN(num) && num >= 1 && num <= state.tasks.length) {
+      const t = state.tasks[num-1];
+      await pool.query("UPDATE tasks SET priority='urgent' WHERE id=$1", [t.id]);
+      await sendWA(from, `📌 تم تثبيت *${t.title}* كأولوية قصوى 🔴`);
+      await clearState(from);
+    } else { await sendWA(from, `❓ أرسل رقم من القائمة`); }
+    return;
+  }
+
   // ✅ حالة انتظار توضيح من المستخدم
   if (state.step === 'waiting_clarification') {
     if (msg === 'نعم' || msg === 'أيوه' || msg === 'ايوه') {
@@ -884,8 +1037,11 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+    // ✅ فهم مرن للأوامر
+    const cmd = detectCommand(msg);
+
     // ── منجز ──
-    if (msg === 'منجز' || msg === 'تم') {
+    if (cmd === 'done') {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
       if (!result.rows.length) { await sendWA(from, '📋 لا توجد مهام معلقة ✅'); return; }
       if (result.rows.length === 1) {
@@ -900,7 +1056,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── تأجيل ──
-    if (msg === 'تأجيل') {
+    if (cmd === 'postpone') {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
       if (!result.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); return; }
       if (result.rows.length === 1) {
@@ -920,7 +1076,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── حذف ──
-    if (msg === 'احذف' || msg === 'حذف') {
+    if (cmd === 'delete') {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
       if (!result.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); return; }
       if (result.rows.length === 1) {
@@ -935,7 +1091,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── تعديل ──
-    if (msg === 'عدل' || msg === 'تعديل') {
+    if (cmd === 'edit') {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
       if (!result.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); return; }
       if (result.rows.length === 1) {
@@ -953,7 +1109,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ✅ اليوم — مهام اليوم فقط
-    if (msg === 'اليوم') {
+    if (cmd === 'today') {
       const result = await pool.query(
         'SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [todayStr()]
       );
@@ -969,7 +1125,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ✅ المنجزة
-    if (msg === 'المنجزة') {
+    if (cmd === 'completed') {
       const result = await pool.query(
         'SELECT * FROM tasks WHERE done=true ORDER BY created_at DESC LIMIT 10'
       );
@@ -984,7 +1140,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ✅ إحصائيات
-    if (msg === 'إحصائيات' || msg === 'احصائيات') {
+    if (cmd === 'stats') {
       const today = todayStr();
       const weekAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0];
 
@@ -1000,8 +1156,8 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ✅ بحث
-    if (msg.startsWith('بحث ')) {
-      const keyword = msg.replace('بحث ', '').trim();
+    if (cmd && cmd.startsWith('search:')) {
+      const keyword = cmd.replace('search:', '').trim();
       const result = await pool.query(
         "SELECT * FROM tasks WHERE title ILIKE $1 ORDER BY date,time LIMIT 10",
         [`%${keyword}%`]
@@ -1018,7 +1174,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── مهامي ──
-    if (msg === 'مهامي' || msg === 'قائمة') {
+    if (cmd === 'list') {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY priority DESC, date,time LIMIT 10');
       if (!result.rows.length) { await sendWA(from, '📋 لا توجد مهام معلقة ✅'); return; }
       let list = '📋 *مهامك المعلقة:*\n\n';
@@ -1032,7 +1188,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── ساعات الدوام ──
-    if (msg.startsWith('دوام ') || msg === 'دوام') {
+    if (cmd === 'workhours' || msg.startsWith('دوام ')) {
       const wh = await getWorkingHours();
       const days = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
       const dayNames = wh.working_days.split(',').map(d => days[parseInt(d)]).join('، ');
@@ -1051,15 +1207,15 @@ app.post('/webhook', async (req, res) => {
     }
 
     // ── جدول موعد ذكي ──
-    if (msg.startsWith('جدول ')) {
-      const title = msg.replace('جدول ', '').trim();
+    if (cmd && cmd.startsWith('schedule:')) {
+      const title = cmd.replace('schedule:', '').trim();
       await setState(from, { step: 'waiting_smart_schedule_date', title });
       await sendWA(from, `📅 جدولة: *${title}*\n\nفي أي يوم؟\nمثال: "غداً" أو "2026-03-25"`);
       return;
     }
 
     // ── مشاركة المهام ──
-    if (msg === 'شارك' || msg === 'مشاركة') {
+    if (cmd === 'share') {
       await setState(from, { step: 'waiting_share_phone' });
       await sendWA(from, `📤 *مشاركة المهام*
 
@@ -1068,10 +1224,99 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+
+    // ── 📝 ملاحظة سريعة ──
+    if (cmd && cmd.startsWith('note:')) {
+      const noteText = cmd.replace('note:', '').trim();
+      const id = Date.now();
+      const today = todayStr();
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [id, noteText, 'task', today, '23:59', '', '']);
+      await sendWA(from, `📝 تم تسجيل الملاحظة:\n\n*${noteText}*`);
+      return;
+    }
+
+    // ── 🔕 إيقاف التذكيرات مؤقتاً ──
+    if (cmd && cmd.startsWith('mute:')) {
+      const hours = parseInt(cmd.replace('mute:', '').trim()) || 2;
+      const muteUntil = new Date(Date.now() + hours * 3600000).toISOString();
+      await pool.query(`
+        INSERT INTO user_states (phone, state, updated_at) VALUES ($1,$2,NOW())
+        ON CONFLICT (phone) DO UPDATE SET state=$2, updated_at=NOW()
+      `, [OWNER_PHONE + '_mute', JSON.stringify({ until: muteUntil })]);
+      await sendWA(from, `🔕 تم إيقاف التذكيرات لـ ${hours} ساعة\nحتى: ${new Date(muteUntil).toLocaleTimeString('ar-SA')}`);
+      return;
+    }
+
+    // ── 🌙 وضع عدم الإزعاج ──
+    if (cmd === 'dnd') {
+      const until = new Date();
+      until.setHours(8, 0, 0, 0);
+      until.setDate(until.getDate() + 1);
+      await pool.query(`
+        INSERT INTO user_states (phone, state, updated_at) VALUES ($1,$2,NOW())
+        ON CONFLICT (phone) DO UPDATE SET state=$2, updated_at=NOW()
+      `, [OWNER_PHONE + '_mute', JSON.stringify({ until: until.toISOString() })]);
+      await sendWA(from, `🌙 وضع عدم الإزعاج مفعّل\nلن أرسل تذكيرات حتى الساعة 8 ص غداً`);
+      return;
+    }
+
+    // ── 👥 ذكّر شخص ──
+    if (cmd && cmd.startsWith('remind_person:')) {
+      const parts = cmd.replace('remind_person:', '').split(':');
+      const personPhone = parts[0];
+      const reminderText = parts[1];
+      await sendWA(personPhone, `🔔 *تذكير من أ. عبدالعزيز:*\n\n${reminderText}`);
+      await sendWA(from, `✅ تم إرسال التذكير لـ ${personPhone}`);
+      return;
+    }
+
+    // ── ↩️ تراجع ──
+    if (cmd === 'undo') {
+      try {
+        const last = await pool.query(
+          "SELECT * FROM tasks ORDER BY created_at DESC LIMIT 1"
+        );
+        if (!last.rows.length) { await sendWA(from, `❓ لا يوجد شيء للتراجع عنه`); return; }
+        const t = last.rows[0];
+        const timeDiff = Date.now() - new Date(t.created_at).getTime();
+        if (timeDiff > 5 * 60 * 1000) {
+          await sendWA(from, `⏰ التراجع متاح فقط خلال 5 دقائق من آخر عملية`);
+          return;
+        }
+        await pool.query('DELETE FROM tasks WHERE id=$1', [t.id]);
+        await sendWA(from, `↩️ تم التراجع عن إضافة *${t.title}*`);
+      } catch(e) { await sendWA(from, `❌ حدث خطأ في التراجع`); }
+      return;
+    }
+
+    // ── 📌 تثبيت مهمة ──
+    if (cmd === 'pin') {
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
+      if (!result.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); return; }
+      if (result.rows.length === 1) {
+        await pool.query("UPDATE tasks SET priority='urgent' WHERE id=$1", [result.rows[0].id]);
+        await sendWA(from, `📌 تم تثبيت *${result.rows[0].title}* كأولوية قصوى 🔴`);
+        return;
+      }
+      let list = '📌 *أي مهمة تثبت؟*\n\n';
+      result.rows.forEach((t,i) => { list += `${i+1}. *${t.title}*\n`; });
+      list += `\nأرسل الرقم`;
+      await sendWA(from, list);
+      await setState(from, { step: 'waiting_pin_selection', tasks: result.rows });
+      return;
+    }
+
     // ── مساعدة ──
-    if (msg === 'مساعدة' || msg === 'help') {
+    if (cmd === 'help') {
       await sendWA(from, `📖 *أوامر مهامي:*\n\n*إضافة:*\n• "اجتماع مع الفريق غداً الساعة 3"\n• "ذكرني بالتقرير الساعة 5"\n• أضف "عاجل" للأولوية 🔴\n• "كل أحد الساعة 9 اجتماع الفريق" (متكرر)\n• *جدول [عنوان]* - جدولة ذكية بحسب الفراغ 🧠\n\n*عرض:*\n• *مهامي* - كل المهام\n• *اليوم* - مهام اليوم\n• *المنجزة* - المنجزة\n• *إحصائيات* - ملخص سريع\n• *بحث [كلمة]* - بحث\n• *دوام* - عرض ساعات الدوام\n\n*إجراءات:*\n• *منجز* / *تأجيل* / *عدل* / *احذف*\n• *إلغاء* - إلغاء أي عملية\n• *موافق [رقم]* / *رفض [رقم]* - طلبات المواعيد
-• *شارك* - مشاركة مهامك مع شخص 📤\n\n_تلخيص صباحي 8 ص_ 🌅 | _تقرير أسبوعي جمعة 5 م_ 📊`);
+• *شارك* - مشاركة مهامك مع شخص 📤
+• *ثبت* - تثبيت مهمة كأولوية 📌
+• *تراجع* - التراجع عن آخر إضافة ↩️
+• *أوقف [ساعات]* - إيقاف التذكيرات مؤقتاً 🔕
+• *عدم الإزعاج* - لا تذكيرات حتى الصباح 🌙
+• *سجل: [نص]* - ملاحظة سريعة 📝
+• *ذكر [رقم] [نص]* - ذكّر شخص\n\n_تلخيص صباحي 8 ص_ 🌅 | _تقرير أسبوعي جمعة 5 م_ 📊 | _تنبيه متأخرة كل ساعة_ ⚠️`);
       return;
     }
   }
