@@ -41,6 +41,8 @@ async function initDB() {
   `);
   await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS location TEXT DEFAULT ''`);
   await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'normal'`);
+  await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requested_by TEXT DEFAULT ''`);
+  await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requested_by_name TEXT DEFAULT ''`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS visitor_reminders (
@@ -525,33 +527,28 @@ cron.schedule('* * * * *', async () => {
   } catch(e) { console.error('Cron error:', e.message); }
 });
 
-// ✅ كرون: تذكير بالمهام المتأخرة — كل ساعة
-cron.schedule('0 * * * *', async () => {
+// ✅ كرون: تقرير المهام المتأخرة — كل يوم الساعة 9 ص
+cron.schedule('0 9 * * *', async () => {
   try {
-    const now = new Date();
     const today = todayStr();
-    const curTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
 
-    // مهام فات وقتها اليوم ولم تُنجز
+    // مهام فات وقتها (قبل اليوم) ولم تُنجز بعد
     const overdue = await pool.query(
-      "SELECT * FROM tasks WHERE done=false AND date=$1 AND time < $2 ORDER BY time",
-      [today, curTime]
+      "SELECT * FROM tasks WHERE done=false AND date < $1 ORDER BY date, time",
+      [today]
     );
 
     if (overdue.rows.length > 0) {
-      let msg = `⚠️ *مهام فات وقتها ولم تُنجز:*\n\n`;
+      let msg = `⚠️ *مهام فات وقتها ولم تُنجز بعد:*\n\n`;
       overdue.rows.forEach((t, i) => {
         const icon = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅';
-        msg += `${i+1}. ${icon} *${t.title}*\n   كان الوقت: ⏰ ${fmt12(t.time)}\n\n`;
+        const requester = t.requested_by_name ? ` · طلبها: ${t.requested_by_name}` : '';
+        msg += `${i+1}. ${icon} *${t.title}*\n   📅 ${t.date} ⏰ ${fmt12(t.time)}${requester}\n\n`;
       });
-      msg += `رد بـ *منجز* أو *احذف* للتعامل معها`;
-
-      const key = `overdue_${today}_${curTime}`;
-      if (!await isReminderSent(key)) {
-        await markReminderSent(key);
-        await sendWA(OWNER_PHONE, msg);
-        console.log(`⚠️ تنبيه مهام متأخرة: ${overdue.rows.length} مهام`);
-      }
+      msg += `_سيستمر هذا التنبيه يومياً حتى إنجازها_ 🔔\n\nأرسل *منجز* للتعامل معها`;
+      await sendWA(OWNER_PHONE, msg);
+      console.log(`⚠️ تقرير مهام متأخرة: ${overdue.rows.length} مهام`);
     }
   } catch(e) { console.error('Overdue check error:', e.message); }
 });
@@ -724,8 +721,8 @@ app.post('/webhook', async (req, res) => {
     if (action === 'موافق') {
       // أضف للجدول
       const taskId = Date.now();
-      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [taskId, r.title, 'meeting', r.proposed_date, r.proposed_time, `مع ${r.name}`, '']);
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location,requested_by,requested_by_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [taskId, r.title, 'meeting', r.proposed_date, r.proposed_time, `مع ${r.name}`, '', r.phone, r.name]);
       await pool.query('UPDATE appointment_requests SET status=$1 WHERE id=$2', ['approved', reqId]);
       await sendWA(from, `✅ تم قبول الموعد وإضافته لجدولك!\n📅 *${r.title}*\n⏰ ${fmt12(r.proposed_time)} - ${r.proposed_date}`);
       await sendWA(r.phone, `✅ *تم قبول موعدك!*\n\n📅 *${r.title}*\n⏰ ${fmt12(r.proposed_time)}\n📅 ${r.proposed_date}\n\nنتطلع لرؤيتك! 🤝`);
