@@ -786,7 +786,26 @@
       </div>
       <div class="form-group">
         <label class="form-label">الوقت</label>
-        <input class="form-input" type="time" id="f-time">
+        <div style="display:flex;gap:6px">
+          <select class="form-select" id="f-hour" style="flex:1">
+            <option value="01">1</option><option value="02">2</option><option value="03">3</option>
+            <option value="04">4</option><option value="05">5</option><option value="06">6</option>
+            <option value="07">7</option><option value="08">8</option><option value="09">9</option>
+            <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+          </select>
+          <select class="form-select" id="f-min" style="flex:1">
+            <option value="00">00</option><option value="05">05</option>
+            <option value="10">10</option><option value="15">15</option>
+            <option value="20">20</option><option value="25">25</option>
+            <option value="30">30</option><option value="35">35</option>
+            <option value="40">40</option><option value="45">45</option>
+            <option value="50">50</option><option value="55">55</option>
+          </select>
+          <select class="form-select" id="f-ampm" style="flex:1">
+            <option value="am">ص</option>
+            <option value="pm">م</option>
+          </select>
+        </div>
       </div>
     </div>
     <div class="form-group">
@@ -833,9 +852,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function updateDate() {
   const now = new Date();
-  const opts = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+  const opts = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Riyadh' };
   document.getElementById('current-date').textContent = now.toLocaleDateString('ar-SA', opts);
   document.getElementById('today-label').textContent = now.toLocaleDateString('ar-SA', opts);
+}
+
+function todayRiyadh() {
+  return new Date().toLocaleDateString('en-CA', {timeZone: 'Asia/Riyadh'});
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────
@@ -899,8 +922,8 @@ async function loadSettings() {
 
 // ─── Stats ────────────────────────────────────────────────────────────────
 function renderStats() {
-  const today = new Date().toISOString().split('T')[0];
-  const weekAgo = new Date(Date.now() - 7*86400000).toISOString().split('T')[0];
+  const today = todayRiyadh();
+  const weekAgo = new Date(Date.now() - 7*86400000).toLocaleDateString('en-CA', {timeZone:'Asia/Riyadh'});
 
   document.getElementById('stat-pending').textContent = allTasks.filter(t => !t.done).length;
   document.getElementById('stat-today').textContent = allTasks.filter(t => !t.done && t.date === today).length;
@@ -909,7 +932,7 @@ function renderStats() {
   document.getElementById('tasks-badge').textContent = allTasks.filter(t => !t.done).length;
 
   // Overdue
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = todayRiyadh();
   const overdue = allTasks.filter(t => !t.done && t.date < todayStr);
   const overdueCard = document.getElementById('overdue-card');
   if (overdue.length > 0) {
@@ -951,7 +974,7 @@ function typeLabel(type) {
 }
 
 function renderTodayTasks() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayRiyadh();
   const tasks = allTasks.filter(t => !t.done && t.date === today).sort((a,b) => a.time?.localeCompare(b.time));
   const tbody = document.getElementById('today-tasks-body');
 
@@ -995,7 +1018,7 @@ function filterTasks(filter, btn) {
 }
 
 function renderAllTasks() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayRiyadh();
   let tasks = [...allTasks];
 
   if (currentFilter === 'pending') tasks = tasks.filter(t => !t.done);
@@ -1016,7 +1039,9 @@ function renderAllTasks() {
   tbody.innerHTML = tasks.map(function(t) {
     var tl = typeLabel(t.type);
     var icon = tl[0], label = tl[1], cls = tl[2];
-    var doneBtn = !t.done ? '<button class="icon-btn green" onclick="completeTask(' + t.id + ')" title="إنجاز">✓</button>' : '';
+    var doneBtn = !t.done
+      ? '<button class="icon-btn green" onclick="completeTask(' + t.id + ')" title="إنجاز">✓</button>'
+      : '<button class="icon-btn" onclick="undoTask(' + t.id + ')" title="إلغاء إنجاز" style="font-size:11px">↩</button>';
     var urgentBadge = t.priority === 'urgent'
       ? '<span class="type-badge priority-urgent">🔴 عاجل</span>'
       : '<span style="color:var(--text3);font-size:12px">عادي</span>';
@@ -1085,6 +1110,14 @@ async function completeTask(id) {
   } catch(e) { showToast('خطأ!', 'error'); }
 }
 
+async function undoTask(id) {
+  try {
+    await fetch(API + '/tasks/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({done:false}) });
+    showToast('↩ تم إلغاء الإنجاز', 'success');
+    loadTasks();
+  } catch(e) { showToast('خطأ!', 'error'); }
+}
+
 async function deleteTask(id) {
   if (!confirm('تأكيد حذف المهمة؟')) return;
   try {
@@ -1108,8 +1141,10 @@ function openAddModal() {
   document.getElementById('f-title').value = '';
   document.getElementById('f-type').value = 'task';
   document.getElementById('f-priority').value = 'normal';
-  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
-  document.getElementById('f-time').value = '';
+  document.getElementById('f-date').value = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Riyadh'});
+  document.getElementById('f-hour').value = '09';
+  document.getElementById('f-min').value = '00';
+  document.getElementById('f-ampm').value = 'am';
   document.getElementById('f-note').value = '';
   document.getElementById('f-location').value = '';
   document.getElementById('f-location-group').style.display = 'none';
@@ -1125,7 +1160,16 @@ function openEditModal(id) {
   document.getElementById('f-type').value = t.type;
   document.getElementById('f-priority').value = t.priority || 'normal';
   document.getElementById('f-date').value = t.date;
-  document.getElementById('f-time').value = t.time;
+  // تحويل 24h → 12h
+  if (t.time) {
+    let [hh, mm] = t.time.split(':').map(Number);
+    const ap = hh < 12 ? 'am' : 'pm';
+    if (hh === 0) hh = 12;
+    else if (hh > 12) hh -= 12;
+    document.getElementById('f-hour').value = String(hh).padStart(2,'0');
+    document.getElementById('f-min').value = String(mm).padStart(2,'0') === '00' ? '00' : String(mm).padStart(2,'0');
+    document.getElementById('f-ampm').value = ap;
+  }
   document.getElementById('f-note').value = t.note || '';
   document.getElementById('f-location').value = t.location || '';
   document.getElementById('f-location-group').style.display = t.type === 'meeting' ? 'block' : 'none';
@@ -1139,8 +1183,19 @@ function closeModal() {
 async function saveTask() {
   const title = document.getElementById('f-title').value.trim();
   const date = document.getElementById('f-date').value;
-  const time = document.getElementById('f-time').value;
-  if (!title || !date || !time) { showToast('يرجى تعبئة جميع الحقول', 'error'); return; }
+  const hour = document.getElementById('f-hour').value;
+  const min = document.getElementById('f-min').value;
+  const ampm = document.getElementById('f-ampm').value;
+  if (!title || !date) { showToast('يرجى تعبئة جميع الحقول', 'error'); return; }
+
+  // تحويل 12h → 24h بشكل صحيح
+  let h = parseInt(hour);
+  if (ampm === 'am') {
+    if (h === 12) h = 0; // 12 ص = منتصف الليل
+  } else {
+    if (h !== 12) h += 12; // 1م-11م
+  }
+  const time = String(h).padStart(2,'0') + ':' + min;
 
   const body = {
     title,
