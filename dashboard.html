@@ -985,12 +985,55 @@ function renderTodayTasks() {
       '</div></td>' +
     '</tr>';
   }).join('');
+}
 
 function filterTasks(filter, btn) {
   currentFilter = filter;
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderAllTasks();
+}
+
+function renderAllTasks() {
+  const today = new Date().toISOString().split('T')[0];
+  let tasks = [...allTasks];
+
+  if (currentFilter === 'pending') tasks = tasks.filter(t => !t.done);
+  else if (currentFilter === 'done') tasks = tasks.filter(t => t.done);
+  else if (currentFilter === 'today') tasks = tasks.filter(t => t.date === today);
+  else if (currentFilter === 'meeting') tasks = tasks.filter(t => t.type === 'meeting' && !t.done);
+  else if (currentFilter === 'urgent') tasks = tasks.filter(t => t.priority === 'urgent' && !t.done);
+  else if (currentFilter === 'overdue') tasks = tasks.filter(t => !t.done && t.date < today);
+
+  tasks.sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+
+  const tbody = document.getElementById('all-tasks-body');
+  if (!tasks.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-icon">✅</div><div class="empty-text">لا توجد مهام</div></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(function(t) {
+    var tl = typeLabel(t.type);
+    var icon = tl[0], label = tl[1], cls = tl[2];
+    var doneBtn = !t.done ? '<button class="icon-btn green" onclick="completeTask(' + t.id + ')" title="إنجاز">✓</button>' : '';
+    var urgentBadge = t.priority === 'urgent'
+      ? '<span class="type-badge priority-urgent">🔴 عاجل</span>'
+      : '<span style="color:var(--text3);font-size:12px">عادي</span>';
+    return '<tr>' +
+      '<td><div class="task-title ' + (t.done ? 'done' : '') + '">' + (t.priority==='urgent' ? '🔴 ' : '') + t.title + '</div></td>' +
+      '<td><span class="type-badge ' + cls + '">' + icon + ' ' + label + '</span></td>' +
+      '<td style="font-size:12px;color:var(--text2)">' + (t.date || '—') + '</td>' +
+      '<td><span class="time-badge">' + (fmt12(t.time) || '—') + '</span></td>' +
+      '<td>' + urgentBadge + '</td>' +
+      '<td><span class="status-badge ' + (t.done ? 'status-approved' : 'status-pending') + '">' + (t.done ? 'منجزة' : 'معلقة') + '</span></td>' +
+      '<td><div class="actions-cell">' + doneBtn +
+        '<button class="icon-btn" onclick="sendReminder(' + t.id + ')" title="إرسال تذكير">🔔</button>' +
+        '<button class="icon-btn" onclick="openEditModal(' + t.id + ')" title="تعديل">✏️</button>' +
+        '<button class="icon-btn red" onclick="deleteTask(' + t.id + ')" title="حذف">🗑</button>' +
+      '</div></td>' +
+    '</tr>';
+  }).join('');
 }
 
 function renderAppointments(data) {
