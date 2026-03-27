@@ -487,13 +487,25 @@ app.post('/tasks/:id/send', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Stubs للداشبورد (إذا مافيه جداول مخصصة بعد)
+// Stubs للداشبورد
 app.get('/appointment-requests', async (req, res) => { res.json([]); });
 app.get('/visitor-reminders', async (req, res) => { res.json([]); });
+
 app.get('/working-hours', async (req, res) => {
-  res.json({ start_time: '10:00', end_time: '18:00', gap_minutes: 60, working_days: '6,0,1,2,3,4' });
+  try {
+    const r = await pool.query("SELECT * FROM settings WHERE key='working_hours'");
+    if (r.rows.length) return res.json(JSON.parse(r.rows[0].value));
+    res.json({ start_time: '10:00', end_time: '18:00', gap_minutes: 60, working_days: '6,0,1,2,3,4' });
+  } catch(e) { res.json({ start_time: '10:00', end_time: '18:00', gap_minutes: 60, working_days: '6,0,1,2,3,4' }); }
 });
-app.patch('/working-hours', async (req, res) => { res.json({ ok: true }); });
+
+app.patch('/working-hours', async (req, res) => {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+    await pool.query(`INSERT INTO settings (key, value) VALUES ('working_hours', $1) ON CONFLICT (key) DO UPDATE SET value=$1`, [JSON.stringify(req.body)]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 app.get('/', (req, res) => {
   res.json({ status: '🟢 مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
