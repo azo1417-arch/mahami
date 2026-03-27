@@ -9,12 +9,12 @@ app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.heade
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ─── تخدم الملفات الثابتة من فولدر public ───────────────────────────────
-app.use(express.static(path.join(__dirname, 'public')));
+// ─── تخدم الملفات الثابتة من الـ root ───────────────────────────────────
+app.use(express.static(__dirname));
 
 // ─── route للداشبورد ─────────────────────────────────────────────────────
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  res.sendFile(path.join(__dirname, 'dashboard.html'));
 });
 
 const PHONE    = '966563466639';
