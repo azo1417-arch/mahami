@@ -122,21 +122,104 @@ async function parseTaskFromMessage(msg) {
   }
 }
 
+// ─── Cron: تذكير في الوقت المحدد ─────────────────────────────────────────
 cron.schedule('* * * * *', async () => {
   const today = todayStr();
   const now = new Date();
   const cur = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  // تذكير في الوقت المحدد
   try {
     const res = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 AND time=$2', [today, cur]);
     for (const t of res.rows) {
-      if (!sentReminders.has(t.id)) {
-        sentReminders.add(t.id);
+      if (!sentReminders.has(`exact_${t.id}`)) {
+        sentReminders.add(`exact_${t.id}`);
         await sendWA(PHONE, buildTaskMsg(t));
-        console.log(`📤 أُرسل تذكير: ${t.title}`);
+        console.log(`📤 تذكير: ${t.title}`);
       }
     }
   } catch(e) { console.error('Cron error:', e.message); }
+
+  // تذكير مسبق قبل 15 دقيقة
+  try {
+    const in15 = new Date(now.getTime() + 15 * 60000);
+    const pre = `${String(in15.getHours()).padStart(2,'0')}:${String(in15.getMinutes()).padStart(2,'0')}`;
+    const res = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 AND time=$2', [today, pre]);
+    for (const t of res.rows) {
+      if (!sentReminders.has(`pre15_${t.id}`)) {
+        sentReminders.add(`pre15_${t.id}`);
+        const icons = { meeting: '📅', task: '✅', reminder: '🔔' };
+        let msg = `⏰ *تذكير مسبق — بعد 15 دقيقة*\n\n`;
+        msg += `${icons[t.type]||'📌'} *${t.title}*\n`;
+        msg += `🕐 ${fmt12(t.time)}\n`;
+        if (t.note) msg += `📝 ${t.note}\n`;
+        if (t.location) msg += `📍 ${t.location}\n`;
+        msg += `\n_مهامي_ ✨`;
+        await sendWA(PHONE, msg);
+        console.log(`🔔 تذكير مسبق: ${t.title}`);
+      }
+    }
+  } catch(e) { console.error('Pre-reminder error:', e.message); }
+
+  // تأكيد اجتماع قبل ساعة
+  try {
+    const in60 = new Date(now.getTime() + 60 * 60000);
+    const pre60 = `${String(in60.getHours()).padStart(2,'0')}:${String(in60.getMinutes()).padStart(2,'0')}`;
+    const res = await pool.query("SELECT * FROM tasks WHERE done=false AND type='meeting' AND date=$1 AND time=$2", [today, pre60]);
+    for (const t of res.rows) {
+      if (!sentReminders.has(`meeting60_${t.id}`)) {
+        sentReminders.add(`meeting60_${t.id}`);
+        let msg = `📅 *تأكيد اجتماع — بعد ساعة*\n\n`;
+        msg += `📌 *${t.title}*\n`;
+        msg += `⏰ ${fmt12(t.time)}\n`;
+        if (t.location) msg += `📍 *الموقع:* ${t.location}\n`;
+        if (t.note) msg += `📝 ${t.note}\n`;
+        msg += `\nاستعد واتفق مع المشاركين 💼\n_مهامي_ ✨`;
+        await sendWA(PHONE, msg);
+        console.log(`📅 تأكيد اجتماع: ${t.title}`);
+      }
+    }
+  } catch(e) { console.error('Meeting confirm error:', e.message); }
 });
+
+// ─── Cron: ملخص صباحي 8 ص ────────────────────────────────────────────────
+cron.schedule('0 8 * * *', async () => {
+  const today = todayStr();
+  try {
+    const res = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [today]);
+    const over = await pool.query("SELECT * FROM tasks WHERE done=false AND date < $1 ORDER BY date, time", [today]);
+
+    let msg = `🌅 *صباح الخير عبدالعزيز*\n`;
+    msg += `📅 ${new Date().toLocaleDateString('ar-SA', {weekday:'long', day:'numeric', month:'long', timeZone:'Asia/Riyadh'})}\n`;
+    msg += `─────────────\n\n`;
+
+    if (res.rows.length === 0) {
+      msg += `✨ ما عندك مهام اليوم — يوم خفيف!\n`;
+    } else {
+      msg += `📋 *مهام اليوم (${res.rows.length}):*\n\n`;
+      res.rows.forEach((t, i) => {
+        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
+        msg += `${i+1}. ${icon} *${t.title}*`;
+        if (t.time) msg += ` — ${fmt12(t.time)}`;
+        msg += `\n`;
+        if (t.location) msg += `   📍 ${t.location}\n`;
+      });
+    }
+
+    if (over.rows.length > 0) {
+      msg += `\n⚠️ *متأخرة من قبل (${over.rows.length}):*\n`;
+      over.rows.slice(0, 3).forEach(t => {
+        msg += `• ${t.title} — ${t.date}\n`;
+      });
+      if (over.rows.length > 3) msg += `• و${over.rows.length - 3} أخرى...\n`;
+    }
+
+    msg += `\n_مهامي_ ✨ — يوم موفق!`;
+    await sendWA(PHONE, msg);
+    console.log('🌅 أُرسل الملخص الصباحي');
+  } catch(e) { console.error('Morning summary error:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
 
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
@@ -284,7 +367,83 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- منجز ---
+  // --- اليوم ---
+  if (msg === 'اليوم') {
+    try {
+      const today = todayStr();
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [today]);
+      if (result.rows.length === 0) { await sendWA(from, '📋 ما عندك مهام اليوم ✅'); return; }
+      let list = `📅 *مهام اليوم (${result.rows.length}):*\n\n`;
+      result.rows.forEach((t, i) => {
+        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
+        list += `${i+1}. ${icon} *${t.title}*`;
+        if (t.time) list += ` — ${fmt12(t.time)}`;
+        if (t.location) list += `\n   📍 ${t.location}`;
+        list += `\n\n`;
+      });
+      await sendWA(from, list);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  // --- غداً ---
+  if (msg === 'غداً' || msg === 'غدا' || msg === 'الغد') {
+    try {
+      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toISOString().split('T')[0];
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time', [tomorrowStr]);
+      if (result.rows.length === 0) { await sendWA(from, '📋 ما عندك مهام الغد ✅'); return; }
+      let list = `📅 *مهام الغد (${result.rows.length}):*\n\n`;
+      result.rows.forEach((t, i) => {
+        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
+        list += `${i+1}. ${icon} *${t.title}*`;
+        if (t.time) list += ` — ${fmt12(t.time)}`;
+        list += `\n\n`;
+      });
+      await sendWA(from, list);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  // --- هذا الأسبوع ---
+  if (msg === 'هذا الأسبوع' || msg === 'الأسبوع' || msg === 'اسبوع') {
+    try {
+      const today = todayStr();
+      const nextWeek = new Date(); nextWeek.setDate(nextWeek.getDate() + 7);
+      const nextWeekStr = nextWeek.toISOString().split('T')[0];
+      const result = await pool.query('SELECT * FROM tasks WHERE done=false AND date>=$1 AND date<=$2 ORDER BY date, time', [today, nextWeekStr]);
+      if (result.rows.length === 0) { await sendWA(from, '📋 ما عندك مهام هذا الأسبوع ✅'); return; }
+      let list = `📅 *مهام الأسبوع (${result.rows.length}):*\n\n`;
+      result.rows.forEach((t, i) => {
+        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
+        list += `${i+1}. ${icon} *${t.title}*\n   📅 ${t.date}`;
+        if (t.time) list += ` — ${fmt12(t.time)}`;
+        list += `\n\n`;
+      });
+      await sendWA(from, list);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+  // --- بحث ---
+  if (msg.startsWith('بحث ') || msg.startsWith('ابحث ')) {
+    const keyword = msg.replace(/^(بحث|ابحث)\s+/, '').trim();
+    try {
+      const result = await pool.query("SELECT * FROM tasks WHERE done=false AND title ILIKE $1 ORDER BY date, time LIMIT 10", [`%${keyword}%`]);
+      if (result.rows.length === 0) { await sendWA(from, `🔍 ما فيه نتائج لـ "${keyword}"`); return; }
+      let list = `🔍 *نتائج البحث عن "${keyword}":*\n\n`;
+      result.rows.forEach((t, i) => {
+        const icon = t.type === 'meeting' ? '📅' : t.type === 'reminder' ? '🔔' : '✅';
+        list += `${i+1}. ${icon} *${t.title}*\n   📅 ${t.date||'—'}`;
+        if (t.time) list += ` — ${fmt12(t.time)}`;
+        list += `\n\n`;
+      });
+      await sendWA(from, list);
+    } catch(e) { console.error(e.message); }
+    return;
+  }
+
+
   if (msg === 'منجز' || msg === 'تم') {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
@@ -304,29 +463,58 @@ app.post('/webhook', async (req, res) => {
     return;
   }
 
-  // --- تأجيل ---
-  if (msg === 'تأجيل') {
+  // --- تأجيل ذكي ---
+  if (msg === 'تأجيل' || msg.startsWith('أجل ') || msg.startsWith('اجل ')) {
     try {
       const result = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date, time LIMIT 10');
       if (result.rows.length === 0) { await sendWA(from, '📋 لا توجد مهام معلقة حالياً ✅'); return; }
+
+      // تأجيل لوقت محدد
+      if (msg.startsWith('أجل ') || msg.startsWith('اجل ')) {
+        const timeText = msg.replace(/^(أجل|اجل)\s+/, '');
+        if (result.rows.length === 1) {
+          const t = result.rows[0];
+          const parsed = await parseTaskFromMessage(`مهمة في ${timeText}`);
+          if (parsed && parsed.time) {
+            await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [parsed.time, t.id]);
+            sentReminders.delete(`exact_${t.id}`);
+            sentReminders.delete(`pre15_${t.id}`);
+            await sendWA(from, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(parsed.time)}`);
+          } else {
+            await sendWA(from, `❓ ما فهمت الوقت، مثال: "أجل لـ 4 العصر"`);
+          }
+          return;
+        }
+        // أكثر من مهمة — احفظ الوقت المطلوب في الـ state
+        userState[from] = { step: 'waiting_postpone_selection', tasks: result.rows, smartTime: timeText };
+        let list = '⏰ *أي مهمة تريد تأجيلها؟*\n\n';
+        result.rows.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
+        list += `أرسل الرقم فقط`;
+        await sendWA(from, list);
+        return;
+      }
+
+      // تأجيل ساعة (الطريقة القديمة)
       if (result.rows.length === 1) {
         const t = result.rows[0];
         const [h, m] = t.time.split(':').map(Number);
         const d = new Date(); d.setHours(h + 1, m);
         const newTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         await pool.query('UPDATE tasks SET time=$1 WHERE id=$2', [newTime, t.id]);
-        sentReminders.delete(t.id);
+        sentReminders.delete(`exact_${t.id}`);
+        sentReminders.delete(`pre15_${t.id}`);
         await sendWA(from, `⏰ تم تأجيل *${t.title}* لـ ${fmt12(newTime)}`);
         return;
       }
       let list = '⏰ *أي مهمة تريد تأجيلها؟*\n\n';
       result.rows.forEach((t, i) => { list += `${i+1}. *${t.title}*\n   ⏰ ${fmt12(t.time)} - ${t.date}\n\n`; });
-      list += `أرسل الرقم فقط`;
+      list += `أرسل الرقم فقط\n\nأو أرسل "أجل لـ 4 العصر" لتأجيل لوقت محدد`;
       await sendWA(from, list);
       userState[from] = { step: 'waiting_postpone_selection', tasks: result.rows };
     } catch(e) { console.error(e.message); }
     return;
   }
+
 
   // --- حذف ---
   if (msg === 'احذف' || msg === 'حذف') {
@@ -389,7 +577,23 @@ app.post('/webhook', async (req, res) => {
 
   // --- مساعدة ---
   if (msg === 'مساعدة' || msg === 'help') {
-    await sendWA(from, `📖 *أوامر مهامي:*\n\n• أرسل مهمة مثل: "اجتماع مع الفريق غداً الساعة 3"\n• *مهامي* - عرض المهام المعلقة\n• *منجز* - تحديد مهمة كمنجزة\n• *تأجيل* - تأجيل مهمة ساعة\n• *عدل* - تعديل مهمة\n• *احذف* - حذف مهمة\n• *مساعدة* - عرض هذه القائمة`);
+    await sendWA(from, `📖 *أوامر مهامي:*\n\n` +
+      `📋 *عرض المهام:*\n` +
+      `• *اليوم* — مهام اليوم\n` +
+      `• *غداً* — مهام الغد\n` +
+      `• *الأسبوع* — مهام هذا الأسبوع\n` +
+      `• *مهامي* — كل المهام المعلقة\n\n` +
+      `✅ *إدارة:*\n` +
+      `• *منجز* — تحديد مهمة كمنجزة\n` +
+      `• *تأجيل* — تأجيل ساعة\n` +
+      `• *أجل لـ 4 العصر* — تأجيل لوقت محدد\n` +
+      `• *عدل* — تعديل مهمة\n` +
+      `• *احذف* — حذف مهمة\n\n` +
+      `🔍 *بحث:*\n` +
+      `• *بحث [كلمة]* — بحث في المهام\n\n` +
+      `➕ *إضافة:*\n` +
+      `• أرسل أي نص مثل: "اجتماع مع الفريق غداً الساعة 3"\n\n` +
+      `_مهامي_ ✨`);
     return;
   }
 
