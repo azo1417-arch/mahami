@@ -230,7 +230,7 @@ app.post('/webhook', async (req, res) => {
   const fromMe = body?.data?.fromMe;
   console.log(`📩 from=${from} fromMe=${fromMe} msg=${msg}`);
   if (!msg || !from) return;
-  if (fromMe) return; // تجاهل رسائل البوت نفسه
+  console.log(`📩 رسالة: from=${from} fromMe=${fromMe} msg=${msg}`);
 
   const state = userState[from] || { step: 'idle' };
 
