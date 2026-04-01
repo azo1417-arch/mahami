@@ -19,7 +19,7 @@ app.get('/dashboard', (req, res) => {
 
 const PHONE    = '966563466639';
 const INSTANCE = 'instance165167';
-const TOKEN    = '79scxmp5uv1687hb';
+const TOKEN    = 't2i3ustg3svr28yr';
 const API_URL  = `https://api.ultramsg.com/${INSTANCE}`;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
