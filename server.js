@@ -224,10 +224,13 @@ cron.schedule('0 8 * * *', async () => {
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
+  console.log('📨 webhook received:', JSON.stringify(body).substring(0, 300));
   const msg  = body?.data?.body?.trim();
   const from = body?.data?.from;
+  const fromMe = body?.data?.fromMe;
+  console.log(`📩 from=${from} fromMe=${fromMe} msg=${msg}`);
   if (!msg || !from) return;
-  console.log(`📩 رسالة من واتساب: ${msg}`);
+  if (fromMe) return; // تجاهل رسائل البوت نفسه
 
   const state = userState[from] || { step: 'idle' };
 
