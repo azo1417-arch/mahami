@@ -235,7 +235,7 @@ app.post('/webhook', async (req, res) => {
   const from = body?.senderData?.chatId?.replace('@c.us', '');
   if (!msg || !from) return;
   console.log(`📩 رسالة من: ${from} — ${msg}`);
-  console.log(`📩 رسالة: from=${from} fromMe=${fromMe} msg=${msg}`);
+  console.log(`📩 رسالة من: ${from} — ${msg}`);
 
   const state = userState[from] || { step: 'idle' };
 
