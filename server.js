@@ -17,11 +17,21 @@ app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'dashboard.html'));
 });
 
-const PHONE    = '966563466639';
-const INSTANCE = 'instance165167';
-const TOKEN    = 't2i3ustg3svr28yr';
-const API_URL  = `https://api.ultramsg.com/${INSTANCE}`;
+const PHONE       = '966563466639';
+const GA_INSTANCE = '7107577151';
+const GA_TOKEN    = 'bf8e5a28cfdc41fabb681fe798d38a303a7a681653c34caeb3';
+const GA_URL      = `https://7107.api.greenapi.com/waInstance${GA_INSTANCE}`;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+
+async function sendWA(to, message) {
+  try {
+    const chatId = to.includes('@') ? to : `${to}@c.us`;
+    await axios.post(`${GA_URL}/sendMessage/${GA_TOKEN}`, {
+      chatId,
+      message
+    });
+  } catch(e) { console.error('WA Error:', e.message); }
+}
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:gLAYYfVCLDpxMTsCirlWkplBaDYxqzvU@postgres.railway.internal:5432/railway',
@@ -49,14 +59,6 @@ initDB();
 
 let sentReminders = new Set();
 const userState = {};
-
-async function sendWA(to, message) {
-  try {
-    await axios.post(`${API_URL}/messages/chat`, null, {
-      params: { token: TOKEN, to, body: message }
-    });
-  } catch(e) { console.error('WA Error:', e.message); }
-}
 
 function fmt12(time24) {
   if (!time24) return '';
@@ -224,12 +226,16 @@ cron.schedule('0 8 * * *', async () => {
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
-  console.log('📨 webhook received:', JSON.stringify(body).substring(0, 300));
-  const msg  = body?.data?.body?.trim();
-  const from = body?.data?.from;
-  const fromMe = body?.data?.fromMe;
-  console.log(`📩 from=${from} fromMe=${fromMe} msg=${msg}`);
+  console.log('📨 webhook:', JSON.stringify(body).substring(0, 300));
+
+  // Green API format
+  const typeWebhook = body?.typeWebhook;
+  if (typeWebhook !== 'incomingMessageReceived') return;
+
+  const msg  = body?.messageData?.textMessageData?.textMessage?.trim();
+  const from = body?.senderData?.chatId?.replace('@c.us', '');
   if (!msg || !from) return;
+  console.log(`📩 رسالة من: ${from} — ${msg}`);
   console.log(`📩 رسالة: from=${from} fromMe=${fromMe} msg=${msg}`);
 
   const state = userState[from] || { step: 'idle' };
