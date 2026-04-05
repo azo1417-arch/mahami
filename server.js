@@ -228,7 +228,6 @@ app.post('/webhook', async (req, res) => {
   const body = req.body;
   console.log('📨 webhook:', JSON.stringify(body).substring(0, 300));
 
-  // Green API format
   const typeWebhook = body?.typeWebhook;
   if (typeWebhook !== 'incomingMessageReceived') return;
 
