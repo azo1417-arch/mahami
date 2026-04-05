@@ -164,13 +164,32 @@ function buildRequestNotification(name, phone, type, details, date, time) {
 // ─── AI: استخراج المهمة ───────────────────────────────────────────────────
 async function parseTaskFromMessage(msg) {
   try {
+    const nowRiyadh = new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' });
+    const nowDate = new Date(nowRiyadh);
     const todayISO = todayStr();
+    const curTime = `${String(nowDate.getHours()).padStart(2,'0')}:${String(nowDate.getMinutes()).padStart(2,'0')}`;
+
+    // حساب الأوقات النسبية (بعد X دقيقة/ساعة)
+    let processedMsg = msg;
+    const relativeMatch = msg.match(/بعد\s+(\d+)\s*(دقيقة|دقائق|ساعة|ساعات)/);
+    if (relativeMatch) {
+      const amount = parseInt(relativeMatch[1]);
+      const unit = relativeMatch[2];
+      const minutes = unit.includes('ساعة') || unit.includes('ساعات') ? amount * 60 : amount;
+      const future = new Date(nowDate.getTime() + minutes * 60000);
+      const futureTime = `${String(future.getHours()).padStart(2,'0')}:${String(future.getMinutes()).padStart(2,'0')}`;
+      const futureDate = future.toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' });
+      processedMsg = msg.replace(relativeMatch[0], `الساعة ${futureTime}`);
+      if (futureDate !== todayISO) processedMsg += ` تاريخ ${futureDate}`;
+    }
+
     const response = await axios.post('https://api.anthropic.com/v1/messages', {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
       messages: [{
         role: 'user',
-        content: `اليوم هو ${todayISO}. استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:
+        content: `اليوم هو ${todayISO} والوقت الحالي بتوقيت الرياض هو ${curTime}.
+استخرج معلومات المهمة من هذه الرسالة وأعد JSON فقط بدون أي نص إضافي أو markdown:
 {"title":"عنوان المهمة","type":"task أو meeting أو reminder","date":"YYYY-MM-DD أو null","time":"HH:MM أو null","note":"ملاحظة أو فارغة"}
 
 قواعد:
@@ -179,8 +198,10 @@ async function parseTaskFromMessage(msg) {
 - غير ذلك → type: task
 - إذا لم يُذكر تاريخ → date: null
 - إذا لم يُذكر وقت → time: null
+- "بكرة" أو "غداً" → تاريخ الغد
+- "بعد ساعة" أو "بعد X دقيقة" → احسب الوقت الصحيح من ${curTime}
 
-الرسالة: "${msg}"`
+الرسالة: "${processedMsg}"`
       }]
     }, {
       headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
@@ -967,6 +988,40 @@ async function handleVisitorMessage(from, msg) {
     }
   }
 
+  // --- انتظار اختيار نوع التذكير ---
+  if (state.step === 'waiting_reminder_choice') {
+    const analysis = await analyzeVisitorMessage(msg, 'الزائر يختار بين تذكير مباشر أو إرسال لعبدالعزيز');
+    const isYes = msg === '1' || msg === '١' || msg.includes('أيوه') || msg.includes('ايوه') || msg.includes('نعم') || msg.includes('اي') || (analysis.choice && analysis.choice === '1');
+
+    if (isYes) {
+      // تذكير مباشر بدون انتظار
+      if (state.reminderTime) {
+        const id = Date.now();
+        await pool.query(
+          'INSERT INTO tasks (id, title, type, date, time, note, requested_by, requested_by_name, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+          [id, state.reminderTitle, 'reminder', state.reminderDate || todayStr(), state.reminderTime, '', from, visitorName, 'approved']
+        );
+        await sendWA(from, `✅ تمام! سأذكّرك بـ "${state.reminderTitle}" في ${fmt12(state.reminderTime)} 🔔`);
+        await sendWA(PHONE, `📬 *إشعار:* نواف سيذكّر ${visitorName} بـ "${state.reminderTitle}" الساعة ${fmt12(state.reminderTime)}`);
+      } else {
+        userState[from] = { step: 'waiting_visitor_reminder_time', history: state.history, visitorName, reminderTitle: state.reminderTitle, directReminder: true };
+        await sendWA(from, `⏰ تمام! متى تبغى أذكّرك؟\nمثال: "بعد ساعة" أو "الساعة 3 العصر"`);
+        return;
+      }
+    } else {
+      // إرسال لعبدالعزيز
+      const id = Date.now();
+      await pool.query(
+        'INSERT INTO tasks (id, title, type, date, time, note, requested_by, requested_by_name, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [id, state.reminderTitle, 'reminder', state.reminderDate, state.reminderTime, '', from, visitorName, 'pending']
+      );
+      await sendWA(from, `تم استلام طلبك! 📨\nسأرفع الطلب لعبدالعزيز الحين وأبلغك بقراره أول ما يرد ✅`);
+      await sendWA(PHONE, buildRequestNotification(visitorName, from, 'reminder', state.reminderTitle, state.reminderDate, state.reminderTime));
+    }
+    userState[from] = { step: 'idle', history: state.history, visitorName };
+    return;
+  }
+
   // --- انتظار التقييم ---
   if (state.step === 'waiting_rating') {
     const analysis = await analyzeVisitorMessage(msg, 'المستخدم يقيّم الخدمة من 1-5');
@@ -1164,19 +1219,25 @@ async function handleVisitorMessage(from, msg) {
 
   if (analysis.intent === 'reminder_for_owner') {
     if (analysis.task_title) {
-      const id = Date.now();
-      await pool.query(
-        'INSERT INTO tasks (id, title, type, date, time, note, requested_by, requested_by_name, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-        [id, analysis.task_title, 'reminder', analysis.date, analysis.time, '', from, visitorName, 'pending']
-      );
-      await sendWA(from, `تم استلام طلبك! 📨\nسأرفع الطلب لعبدالعزيز الحين وأبلغك بقراره أول ما يرد ✅`);
-      await sendWA(PHONE, buildRequestNotification(visitorName, from, 'reminder', analysis.task_title, analysis.date, analysis.time));
+      // اقترح على الزائر التذكير المباشر
+      userState[from] = {
+        ...state,
+        step: 'waiting_reminder_choice',
+        reminderTitle: analysis.task_title,
+        reminderDate: analysis.date,
+        reminderTime: analysis.time,
+        visitorName
+      };
+      await sendWA(from, `🔔 فاهم إنك تبغى تذكّر عبدالعزيز بـ "${analysis.task_title}"\n\nشرايك أذكّرك أنا مباشرة بدون ما تنتظر رد؟ 😊\n\n1️⃣ أيوه، ذكّرني أنت\n2️⃣ لا، أرسلها لعبدالعزيز`);
     } else {
       userState[from] = { step: 'waiting_visitor_details', requestType: 'reminder', history: state.history, visitorName };
       await sendWA(from, `🔔 تمام! وش تبيني أذكّر عبدالعزيز فيه؟ 👇`);
     }
     return;
   }
+
+  // --- انتظار اختيار نوع التذكير ---
+  // (يُعالج في بداية الدالة)
 
   if (analysis.intent === 'reminder_for_self') {
     userState[from] = { step: 'waiting_visitor_reminder_topic', history: state.history, visitorName };
@@ -1215,6 +1276,8 @@ cron.schedule('* * * * *', async () => {
       if (!sentReminders.has(`visitor_${t.id}`)) {
         sentReminders.add(`visitor_${t.id}`);
         await sendWA(t.requested_by, `🔔 تذكيرك: *${t.title}*\n_من نواف_ ✨`);
+        // إبلاغ عبدالعزيز
+        await sendWA(PHONE, `📬 تم تذكير *${t.requested_by_name}* بـ "${t.title}" ✅`);
       }
     }
   } catch(e) { console.error('Visitor reminder error:', e.message); }
