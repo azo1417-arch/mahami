@@ -293,7 +293,15 @@ async function nawafOwnerReply(msg, context) {
     'أنت "نواف" المساعد الشخصي لعبدالعزيز.\n' +
     'أنت ذكي جداً مثل Claude AI — تعرف الطب، التقنية، السيارات، التاريخ، العلوم، القانون، الدين، الاقتصاد، وأي موضوع.\n' +
     'للبيانات الحية (طقس، عملات، أخبار) عبدالعزيز يسألك مباشرة وأنت تجيبه من APIs منفصلة.\n' +
-    'تتكلم بعامية سعودية طبيعية، مباشر وواضح.\n\n' +
+    'تتكلم بعامية نجدية سعودية أصيلة — بالضبط زي أهل الرياض.\n' +
+    'أمثلة من الأسلوب الصح:\n' +
+    '- "ابشر بذكرك فيها إن شاء الله"\n' +
+    '- "لا والله ما سويتها، بس الحين بسويها"\n' +
+    '- "أي، أوقات يكون الوضع كذا"\n' +
+    '- "تبي أقولك نكتة يا قلبي"\n' +
+    '- "الجو برا عجاج وملاهيب"\n' +
+    '- "الجو حق فرة وكوب قهوة"\n' +
+    'لا تكسير، لا خليجية، لا فصحى. نجدي طبيعي.\n\n' +
     'قواعد ذهبية:\n' +
     '1. لا تقول أبداً "وضح أكثر" أو "ما فهمت" — دائماً اجتهد وأجب بأفضل فهم للرسالة\n' +
     '2. لو الرسالة قصيرة أو غامضة، افترض السياق الأكثر منطقية وأجب\n' +
@@ -319,7 +327,13 @@ async function nawafVisitorReply(visitorName, msg, history) {
   }).join('\n');
   const prompt =
     'أنت "نواف" المساعد الشخصي لعبدالعزيز على واتساب.\n' +
-    'شخصيتك: خليجي ودي، دافئ، عامية سعودية.\n' +
+    'شخصيتك: ودي ومرتب، تتكلم عامية نجدية سعودية أصيلة.\n' +
+    'أمثلة من الأسلوب الصح:\n' +
+    '- "ابشر، بوصل لك طلبك"\n' +
+    '- "لا والله ما وصلني، بس الحين بشوف"\n' +
+    '- "أي، تفضل قلي وش تحتاج"\n' +
+    '- "تمام، بحطها عند عبدالعزيز"\n' +
+    'لا تكسير، لا خليجية. نجدي طبيعي.\n' +
     'مهمتك: مساعدة الزوار في التواصل مع عبدالعزيز.\n' +
     (lessons ? 'دروس من محادثات سابقة:\n' + lessons + '\n\n' : '') +
     'سجل المحادثة:\n' + histText + '\n\n' +
@@ -1014,17 +1028,23 @@ async function handleOwner(from, msg) {
     }
 
     case 'weather': {
-      const city   = analysis.task_title || 'الرياض';
-      const data   = await getWeather(city);
+      const city = analysis.task_title || 'الرياض';
+      const data = await getWeather(city);
       if (data) {
-        let reply = '🌤️ *الطقس في ' + data.city + '*\n\n';
-        reply += '🌡️ الحرارة: *' + data.temp + '* (يحس ' + data.feels + ')\n';
-        reply += '☁️ الحالة: ' + data.desc + '\n';
-        reply += '💧 الرطوبة: ' + data.humidity + '\n';
-        reply += '💨 الرياح: ' + data.wind + '\n';
-        reply += '☀️ مؤشر UV: ' + data.uv;
+        const temp = parseInt(data.temp);
+        let desc = '';
+        if (temp >= 38) desc = 'عجاج وملاهيب';
+        else if (temp >= 30) desc = 'حر';
+        else if (temp <= 15) desc = 'برد';
+        else desc = 'حق فرة وكوب قهوة';
+        let reply = '🌤️ الجو في ' + data.city + ':\n\n';
+        reply += 'برا ' + desc + ' — *' + data.temp + '*\n';
+        reply += '☁️ ' + data.desc + '\n';
+        reply += '💧 رطوبة: ' + data.humidity + '\n';
+        reply += '💨 رياح: ' + data.wind + '\n';
+        reply += '☀️ UV: ' + data.uv;
         await sendWA(from, reply);
-      } else { await sendWA(from, '❌ ما قدرت أجيب بيانات الطقس، جرب لاحقاً'); }
+      } else { await sendWA(from, 'ما قدرت أجيب الطقس، جرب بعدين'); }
       break;
     }
 
@@ -1362,7 +1382,8 @@ async function handleWife(from, msg) {
       }
     }
     const prompt =
-      'أنت "نواف" مساعد عبدالعزيز. هذه زوجته، تعاملها باحترام وود خاص.\n' +
+      'أنت "نواف" مساعد عبدالعزيز. هذه زوجته، تعاملها باحترام وود.\n' +
+      'تكلم بعامية نجدية أصيلة، مثل: "ابشري"، "لا والله"، "أي تفضلي".\n' +
       (memCtx ? 'معلومات مفيدة:\n' + memCtx + '\n' : '') +
       'رسالة الزوجة: "' + msg + '"\n\n' +
       'رد بشكل طبيعي ومفيد. إذا كان في الرسالة معلومة مهمة لعبدالعزيز أخبره بها.';
@@ -1491,6 +1512,32 @@ async function handleVisitor(from, msg) {
     userState[from] = { step: 'waiting_visitor_confirm', pendingTask: { title: state.requestTitle, type: state.requestType, date, time }, history: state.history, visitorName };
     await sendWA(from, buildConfirmMsg(state.requestType, state.requestTitle, date, time));
     return;
+  }
+
+  // ─── طقس وعملات للزوار قبل التحليل ─────────────────────────────────────
+  if (visitorName) {
+    const lm = msg;
+    const isWeather  = ['الجو','الطقس','حرارة','بارد','حار','درجة الحرارة'].some(function(w){ return lm.includes(w); });
+    const isCurrency = ['سعر الدولار','سعر العملة','صرف الريال','سعر الريال'].some(function(w){ return lm.includes(w); });
+    if (isWeather) {
+      const data = await getWeather('Riyadh');
+      if (data) {
+        let reply = '';
+        const temp = parseInt(data.temp);
+        if (temp >= 38) reply = 'الجو برا عجاج وملاهيب — ' + data.temp + '\n';
+        else if (temp >= 30) reply = 'الجو حار بره — ' + data.temp + '\n';
+        else if (temp <= 15) reply = 'الجو برد بره — ' + data.temp + '\n';
+        else reply = 'الجو حق فرة وكوب قهوة — ' + data.temp + '\n';
+        reply += data.desc + '\nرطوبة: ' + data.humidity + ' | رياح: ' + data.wind;
+        await sendWA(from, reply);
+      } else { await sendWA(from, 'ما قدرت أجيب الطقس الحين، جرب بعدين'); }
+      return;
+    }
+    if (isCurrency) {
+      const rates = await getCurrencyRates();
+      if (rates) await sendWA(from, 'دولار: ' + rates.USD + ' ر.س | يورو: ' + rates.EUR + ' ر.س | درهم: ' + rates.AED + ' ر.س');
+      return;
+    }
   }
 
   // ─── تحليل الرسالة ────────────────────────────────────────────────────
@@ -1628,26 +1675,6 @@ async function handleVisitor(from, msg) {
   if (analysis.intent === 'reminder_for_self') {
     userState[from] = { step: 'waiting_visitor_reminder_topic', history: state.history, visitorName };
     await sendWA(from, '🔔 وش تبيني أذكّرك فيه؟ 👇'); return;
-  }
-
-  // طقس وعملات للزوار
-  if (analysis.intent === 'chat' || analysis.intent === 'unknown') {
-    const lowerMsg = msg.toLowerCase();
-    if (lowerMsg.includes('الجو') || lowerMsg.includes('الطقس') || lowerMsg.includes('حرارة') || lowerMsg.includes('بارد') || lowerMsg.includes('حار')) {
-      const data = await getWeather('Riyadh');
-      if (data) {
-        let reply = 'الجو في الرياض الحين:\n';
-        reply += data.desc + ' — ' + data.temp + '\n';
-        reply += 'الرطوبة: ' + data.humidity + ' | الرياح: ' + data.wind;
-        await sendWA(from, reply); return;
-      }
-    }
-    if (lowerMsg.includes('سعر الدولار') || lowerMsg.includes('العملات') || lowerMsg.includes('الريال')) {
-      const rates = await getCurrencyRates();
-      if (rates) {
-        await sendWA(from, 'دولار: ' + rates.USD + ' ر.س | يورو: ' + rates.EUR + ' ر.س'); return;
-      }
-    }
   }
 
   // رد نواف الذكي
