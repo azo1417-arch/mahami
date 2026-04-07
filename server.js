@@ -688,48 +688,44 @@ app.post('/webhook', async function(req, res) {
   let msg      = null;
   let fileUrl  = null;
   let fileType = null;
-  let quotedText = null;  // نص الرسالة المُنشَن عليها
+  let quotedText = null;
   const md = body && body.messageData;
+
   if (md) {
-    // رسالة نصية عادية
     if (md.textMessageData && md.textMessageData.textMessage) {
       msg = md.textMessageData.textMessage.trim();
-    }
-    // رسالة منشن أو forward أو رسالة بها رابط
-    else if (md.extendedTextMessageData) {
+    } else if (md.extendedTextMessageData) {
       msg = (md.extendedTextMessageData.text || '').trim();
-      // الرسالة المُنشَن عليها
-      if (md.extendedTextMessageData.contextInfo &&
-          md.extendedTextMessageData.contextInfo.quotedMessage) {
-        const qm = md.extendedTextMessageData.contextInfo.quotedMessage;
-        quotedText = qm.conversation || qm.extendedTextMessage?.text || '';
+      const ctx = md.extendedTextMessageData.contextInfo || null;
+      if (ctx && ctx.quotedMessage) {
+        const qm = ctx.quotedMessage;
+        quotedText = qm.conversation || (qm.extendedTextMessage && qm.extendedTextMessage.text) || null;
       }
-    }
-    // صورة
-    else if (md.imageMessageData) {
+    } else if (md.imageMessageData) {
       fileUrl  = md.imageMessageData.downloadUrl || md.imageMessageData.jpegThumbnail;
       fileType = 'jpeg';
       msg      = md.imageMessageData.caption || '';
-    }
-    // ملف PDF أو مستند
-    else if (md.documentMessageData) {
+    } else if (md.documentMessageData) {
       fileUrl  = md.documentMessageData.downloadUrl;
-      fileType = md.documentMessageData.fileName && md.documentMessageData.fileName.toLowerCase().endsWith('.pdf') ? 'pdf' : 'doc';
-      msg      = md.documentMessageData.caption || md.documentMessageData.fileName || '';
+      const fn = md.documentMessageData.fileName || '';
+      fileType = fn.toLowerCase().endsWith('.pdf') ? 'pdf' : 'doc';
+      msg      = md.documentMessageData.caption || fn || '';
+    } else if (md.quotedMessage) {
+      msg = md.quotedMessage.textMessage || '';
+    } else if (md.conversation) {
+      msg = md.conversation.trim();
     }
   }
+
+  if (!msg && !fileUrl && body && body.body) msg = body.body.trim();
+
   const from = body && body.senderData && body.senderData.chatId && body.senderData.chatId.replace('@c.us','');
   if (!from) return;
   if (!msg && !fileUrl) return;
 
-  // لو في رسالة منشن — ادمجها مع رسالتك عشان نواف يفهم السياق
-  if (quotedText && msg) {
-    msg = msg + '\n[الرسالة المُنشَن عليها: ' + quotedText + ']';
-  } else if (quotedText && !msg) {
-    msg = quotedText;
-  }
+  if (quotedText) msg = (msg ? msg + ' ' : '') + '[منشن: ' + quotedText + ']';
 
-  console.log('📩', from, '—', (msg||'').substring(0,80), fileUrl?'[ملف]':'');
+  console.log('📩', from, '--', (msg||'').substring(0,100), fileUrl?'[ملف]':'');
 
   // معالجة الملفات
   if (fileUrl && from === PHONE) {
@@ -1620,6 +1616,26 @@ async function handleVisitor(from, msg) {
   if (analysis.intent === 'reminder_for_self') {
     userState[from] = { step: 'waiting_visitor_reminder_topic', history: state.history, visitorName };
     await sendWA(from, '🔔 وش تبيني أذكّرك فيه؟ 👇'); return;
+  }
+
+  // طقس وعملات للزوار
+  if (analysis.intent === 'chat' || analysis.intent === 'unknown') {
+    const lowerMsg = msg.toLowerCase();
+    if (lowerMsg.includes('الجو') || lowerMsg.includes('الطقس') || lowerMsg.includes('حرارة') || lowerMsg.includes('بارد') || lowerMsg.includes('حار')) {
+      const data = await getWeather('Riyadh');
+      if (data) {
+        let reply = 'الجو في الرياض الحين:\n';
+        reply += data.desc + ' — ' + data.temp + '\n';
+        reply += 'الرطوبة: ' + data.humidity + ' | الرياح: ' + data.wind;
+        await sendWA(from, reply); return;
+      }
+    }
+    if (lowerMsg.includes('سعر الدولار') || lowerMsg.includes('العملات') || lowerMsg.includes('الريال')) {
+      const rates = await getCurrencyRates();
+      if (rates) {
+        await sendWA(from, 'دولار: ' + rates.USD + ' ر.س | يورو: ' + rates.EUR + ' ر.س'); return;
+      }
+    }
   }
 
   // رد نواف الذكي
