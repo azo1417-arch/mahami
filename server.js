@@ -79,6 +79,27 @@ async function initDB() {
     "reminded BOOLEAN DEFAULT FALSE, " +
     "created_at TIMESTAMP DEFAULT NOW())"
   );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS conversation_history (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "phone TEXT NOT NULL, " +
+    "role TEXT NOT NULL, " +
+    "message TEXT NOT NULL, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query("CREATE INDEX IF NOT EXISTS conv_phone_idx ON conversation_history(phone, created_at DESC)");
+
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS recurring_tasks (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "title TEXT NOT NULL, " +
+    "type TEXT DEFAULT 'task', " +
+    "time TEXT, " +
+    "days TEXT, " +
+    "note TEXT DEFAULT '', " +
+    "active BOOLEAN DEFAULT TRUE, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
   console.log('✅ DB جاهزة');
 }
 initDB();
@@ -271,6 +292,8 @@ async function analyzeOwner(msg, context) {
     '- وش عندي عن [اسم] = recall_relation\n' +
     '- اضف موعد متاح = add_slot\n' +
     '- وش مواعيدي المتاحة = show_slots\n' +
+    '- كل [يوم/أسبوع/أحد/اثنين] الساعة X = add_recurring (task_title=العنوان, note=الأيام والوقت)\n' +
+    '- وش تذكيراتي المتكررة/المتكررة = show_recurring\n' +
     '- الجو/الطقس/حرارة/بارد/حار = weather (task_title = اسم المدينة لو ذكرت)\n' +
     '- سعر الدولار/العملات/الريال/صرف = currency\n' +
     '- سعر الذهب = gold\n' +
@@ -405,7 +428,23 @@ async function extractExpiryFromFile(fileUrl, fileType) {
 }
 
 
-// ─── الطقس ────────────────────────────────────────────────────────────────
+// ─── ذاكرة المحادثة ───────────────────────────────────────────────────────
+async function saveConvMsg(phone, role, message) {
+  try {
+    await pool.query('INSERT INTO conversation_history (phone,role,message) VALUES ($1,$2,$3)',[phone,role,message]);
+    // احذف القديم — احتفظ بآخر 20 رسالة فقط
+    await pool.query('DELETE FROM conversation_history WHERE phone=$1 AND id NOT IN (SELECT id FROM conversation_history WHERE phone=$1 ORDER BY created_at DESC LIMIT 20)',[phone,phone]);
+  } catch(e) {}
+}
+
+async function getConvHistory(phone, limit) {
+  try {
+    const r = await pool.query('SELECT role,message FROM conversation_history WHERE phone=$1 ORDER BY created_at DESC LIMIT $2',[phone, limit||10]);
+    return r.rows.reverse();
+  } catch(e) { return []; }
+}
+
+
 async function getWeather(city) {
   try {
     const q   = encodeURIComponent(city || 'Riyadh');
@@ -507,6 +546,19 @@ function buildRequestNotif(name, from, type, title, date, time) {
   return msg;
 }
 
+async function buildRequestNotifSmart(name, from, type, title, date, time) {
+  // جيب تاريخ الزائر
+  let history = '';
+  try {
+    const prev = await pool.query("SELECT * FROM tasks WHERE requested_by=$1 AND status!='awaiting_visitor_confirm' ORDER BY created_at DESC LIMIT 3",[from]);
+    if (prev.rows.length > 0) {
+      history = '\n\n👤 *تاريخ ' + name + ':*\n';
+      prev.rows.forEach(function(t) { history += '- ' + t.title + ' (' + t.status + ')\n'; });
+    }
+  } catch(e) {}
+  return buildRequestNotif(name, from, type, title, date, time) + history;
+}
+
 function buildConfirmMsg(type, title, date, time) {
   const tLabel = type==='meeting'?'اجتماع':type==='reminder'?'تذكير':'مهمة/طلب';
   const tIcon  = type==='meeting'?'📅':type==='reminder'?'🔔':'📌';
@@ -526,6 +578,27 @@ function welcomeMsg() {
 function menuMsg(name) {
   return 'هلا ' + name + '! 😊\nوش أقدر أساعدك فيه؟\n\n1️⃣ تسجيل مهمة أو طلب\n2️⃣ جدولة اجتماع\n3️⃣ تذكير عبدالعزيز\n4️⃣ تذكيرك أنت\n\nأرسل الرقم أو اكتب مباشرة 👇';
 }
+
+// ─── Cron: تذكيرات متكررة ────────────────────────────────────────────────
+cron.schedule('0 0 * * *', async function() {
+  try {
+    const today    = todayStr();
+    const dayOfWeek = new Date().getDay(); // 0=أحد, 1=اثنين...
+    const dayNames  = { 0:'أحد', 1:'اثنين', 2:'ثلاثاء', 3:'أربعاء', 4:'خميس', 5:'جمعة', 6:'سبت' };
+    const todayName = dayNames[dayOfWeek];
+    const res = await pool.query("SELECT * FROM recurring_tasks WHERE active=true");
+    for (const rt of res.rows) {
+      const days = rt.days ? rt.days.split(',') : [];
+      const isToday = days.length === 0 || days.includes(String(dayOfWeek)) || days.includes(todayName);
+      if (isToday) {
+        const id = Date.now() + Math.floor(Math.random()*1000);
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note) VALUES ($1,$2,$3,$4,$5,$6)',
+          [id, rt.title, rt.type||'task', today, rt.time||null, rt.note||'']);
+        console.log('🔄 تذكير متكرر:', rt.title);
+      }
+    }
+  } catch(e) { console.error('Recurring:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: تذكير وثائق منتهية ────────────────────────────────────────────
 cron.schedule('0 9 * * *', async function() {
@@ -622,33 +695,33 @@ cron.schedule('*/10 * * * * *', async function() {
 
 }, { timezone: 'Asia/Riyadh' });
 
-// ─── Cron: ملخص صباحي 8 ص ────────────────────────────────────────────────
+// ─── Cron: ملخص صباحي ذكي 8 ص ───────────────────────────────────────────
 cron.schedule('0 8 * * *', async function() {
   const today = todayStr();
   try {
-    const res  = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[today]);
-    const over = await pool.query('SELECT * FROM tasks WHERE done=false AND date<$1 ORDER BY date,time',[today]);
-    let msg = '🌅 *صباح الخير عبدالعزيز*\n📅 ' +
-      new Date().toLocaleDateString('ar-SA',{weekday:'long',day:'numeric',month:'long',timeZone:'Asia/Riyadh'}) +
-      '\n─────────────\n\n';
-    if (!res.rows.length) {
-      msg += '✨ ما عندك مهام اليوم — يوم خفيف!\n';
-    } else {
-      msg += '📋 *مهام اليوم (' + res.rows.length + '):*\n\n';
-      res.rows.forEach(function(t,i) {
-        const icon = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅';
-        msg += (i+1) + '. ' + icon + ' *' + t.title + '*' +
-          (t.time?' — '+fmt12(t.time):'') +
-          (t.requested_by_name?' (من '+t.requested_by_name+')':'') + '\n';
-        if (t.location) msg += '   📍 ' + t.location + '\n';
-      });
-    }
-    if (over.rows.length) {
-      msg += '\n⚠️ *متأخرة (' + over.rows.length + '):*\n';
-      over.rows.slice(0,3).forEach(function(t) { msg += '• ' + t.title + ' — ' + t.date + '\n'; });
-    }
-    msg += '\n_مهامي_ ✨ — يوم موفق!';
-    await sendWA(PHONE, msg);
+    const [todayTasks, pendingReq, overdue] = await Promise.all([
+      pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[today]),
+      pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 5"),
+      pool.query('SELECT * FROM tasks WHERE done=false AND date<$1 ORDER BY date,time LIMIT 5',[today])
+    ]);
+
+    // اسأل نواف يبني الملخص الذكي
+    const tasksList  = todayTasks.rows.map(function(t){ return t.title + (t.time?' — '+fmt12(t.time):'') + (t.type==='meeting'?' (اجتماع)':''); }).join('\n');
+    const reqList    = pendingReq.rows.map(function(t){ return t.requested_by_name + ': ' + t.title; }).join('\n');
+    const overdueList= overdue.rows.map(function(t){ return t.title + ' — ' + t.date; }).join('\n');
+
+    const prompt =
+      'أنت نواف، ابن ملخص صباحي ذكي لعبدالعزيز.\n' +
+      'تكلم بعامية نجدية: "ابشر"، "يوم مبارك"، "عندك كذا"\n\n' +
+      'مهام اليوم:\n' + (tasksList||'ما في مهام') + '\n\n' +
+      'طلبات معلقة:\n' + (reqList||'ما في طلبات') + '\n\n' +
+      'متأخرة:\n' + (overdueList||'ما في') + '\n\n' +
+      'اكتب ملخص مختصر وذكي — أهم شيء أولاً، لا تعداد ممل.\n' +
+      'إذا عنده اجتماعات نبهه خاص. إذا في طلبات معلقة ذكره.\n' +
+      'لا تزيد عن 10 أسطر.';
+
+    const summary = await callAI('claude-sonnet-4-20250514', 500, prompt);
+    await sendWA(PHONE, '🌅 ' + (summary || 'صباح الخير عبدالعزيز!'));
   } catch(e) { console.error('Morning:', e.message); }
 }, { timezone: 'Asia/Riyadh' });
 
@@ -835,15 +908,22 @@ async function handleOwner(from, msg) {
 
   let context = '';
   try {
-    const pr = await pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 3");
-    const td = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time LIMIT 5',[todayStr()]);
+    const [pr, td, history] = await Promise.all([
+      pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 3"),
+      pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time LIMIT 5',[todayStr()]),
+      getConvHistory(from, 8)
+    ]);
     if (pr.rows.length) {
       context += 'طلبات معلقة:\n';
       pr.rows.forEach(function(t) { context += '- ' + t.requested_by_name + ': "' + t.title + '" (' + t.type + ')' + (t.time?' '+fmt12(t.time):'') + '\n'; });
     }
     if (td.rows.length) {
       context += '\nمهام اليوم:\n';
-      td.rows.forEach(function(t) { context += '- ' + t.title + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+      td.rows.forEach(function(t) { context += '- ' + t.title + (t.time?' — '+fmt12(t.time):'') + (t.done?' ✅':'') + '\n'; });
+    }
+    if (history.length) {
+      context += '\nسجل المحادثة الأخيرة:\n';
+      history.forEach(function(h) { context += (h.role==='owner'?'عبدالعزيز':'نواف') + ': ' + h.message + '\n'; });
     }
     if (!context) context = 'لا يوجد طلبات أو مهام';
   } catch(e) {}
@@ -851,6 +931,7 @@ async function handleOwner(from, msg) {
   const analysis = await analyzeOwner(msg, context);
   if (!analysis) { await sendWA(from, '❓ ما فهمت، جرب مرة ثانية'); return; }
   console.log('🧠 owner action:', analysis.action);
+  setImmediate(function() { saveConvMsg(from, 'owner', msg); });
 
   switch(analysis.action) {
 
@@ -1107,6 +1188,40 @@ async function handleOwner(from, msg) {
       break;
     }
 
+    case 'add_recurring': {
+      const title = analysis.task_title || msg;
+      const time  = analysis.time;
+      const note  = analysis.note || '';
+      // استخرج الأيام من الرسالة
+      const dayMap = { 'أحد':'0','اثنين':'1','ثلاثاء':'2','أربعاء':'3','خميس':'4','جمعة':'5','سبت':'6' };
+      let days = [];
+      Object.keys(dayMap).forEach(function(d) { if (msg.includes(d)) days.push(dayMap[d]); });
+      const daysStr = days.length > 0 ? days.join(',') : '';
+      if (title && time) {
+        await pool.query('INSERT INTO recurring_tasks (title,type,time,days,note) VALUES ($1,$2,$3,$4,$5)',
+          [title,'task',time,daysStr,note]);
+        const daysLabel = days.length > 0 ? 'كل ' + Object.keys(dayMap).filter(function(d){ return days.includes(dayMap[d]); }).join(' و') : 'كل يوم';
+        await sendWA(from, 'تمام، بضيف "' + title + '" ' + daysLabel + ' الساعة ' + fmt12(time) + ' تلقائياً ✅');
+      } else {
+        userState[from] = { step: 'waiting_datetime', taskTitle: title, taskType: 'recurring', taskNote: note };
+        await sendWA(from, '⏰ وش الوقت والأيام للتذكير المتكرر؟\nمثال: "كل أحد الساعة 9 الصبح"');
+      }
+      break;
+    }
+
+    case 'show_recurring': {
+      const r = await pool.query("SELECT * FROM recurring_tasks WHERE active=true ORDER BY created_at DESC");
+      if (!r.rows.length) { await sendWA(from, 'ما عندك تذكيرات متكررة'); break; }
+      let list = '🔄 *تذكيراتك المتكررة:*\n\n';
+      r.rows.forEach(function(t,i) {
+        const dayNames = { '0':'أحد','1':'اثنين','2':'ثلاثاء','3':'أربعاء','4':'خميس','5':'جمعة','6':'سبت' };
+        const days = t.days ? t.days.split(',').map(function(d){ return dayNames[d]||d; }).join(' و') : 'كل يوم';
+        list += (i+1) + '. ' + t.title + ' — ' + days + (t.time?' الساعة '+fmt12(t.time):'') + '\n';
+      });
+      await sendWA(from, list);
+      break;
+    }
+
     case 'show_today': {
       const r = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[todayStr()]);
       if (!r.rows.length) { await sendWA(from, '📋 ما عندك مهام اليوم ✅'); break; }
@@ -1267,7 +1382,10 @@ async function handleOwner(from, msg) {
         } catch(e) {}
       }
       const reply = await nawafOwnerReply(msg, context);
-      if (reply) { await sendWA(from, reply); }
+      if (reply) {
+        await sendWA(from, reply);
+        setImmediate(function() { saveConvMsg(from, 'nawaf', reply.substring(0,200)); });
+      }
       else { await sendWA(from, 'قلي وش تقصد بالضبط؟'); }
       break;
     }
@@ -1462,7 +1580,8 @@ async function handleVisitor(from, msg) {
       await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id,pt.title,pt.type,pt.date,pt.time,'',from,visitorName,'awaiting_visitor_confirm']);
       await pool.query('UPDATE visitors SET last_request=$1 WHERE phone=$2',[pt.title,from]);
       await sendWA(from, '✅ تم تسجيل طلبك!\nسأرفعه لعبدالعزيز الحين وأبلغك بقراره قريباً 😊');
-      await sendWA(PHONE, buildRequestNotif(visitorName, from, pt.type, pt.title, pt.date, pt.time));
+      const notif = await buildRequestNotifSmart(visitorName, from, pt.type, pt.title, pt.date, pt.time);
+      await sendWA(PHONE, notif);
       setImmediate(function() { learnFromVisitor(visitorName, state.history, 'أكد: ' + pt.title); });
       userState[from] = { step: 'idle', history: state.history, visitorName };
     } else if (isNo) {
