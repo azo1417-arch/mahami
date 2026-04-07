@@ -682,7 +682,9 @@ app.post('/webhook', async function(req, res) {
   res.sendStatus(200);
   const body = req.body;
   if (body && body.typeWebhook !== 'incomingMessageReceived') return;
-  // قراءة النص من كل أنواع الرسائل
+  if (body && body.typeWebhook === 'incomingMessageReceived') {
+    console.log('📦 FULL WEBHOOK:', JSON.stringify(body, null, 2).substring(0, 2000));
+  }
   let msg      = null;
   let fileUrl  = null;
   let fileType = null;
