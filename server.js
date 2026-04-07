@@ -68,6 +68,17 @@ async function initDB() {
   await pool.query(
     "INSERT INTO special_contacts (phone,name,relation) VALUES ('" + WIFE_PHONE + "','الزوجة','wife') ON CONFLICT (phone) DO NOTHING"
   );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS documents (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "owner TEXT NOT NULL, " +
+    "title TEXT DEFAULT '', " +
+    "expiry_date TEXT, " +
+    "remind_date TEXT, " +
+    "file_url TEXT, " +
+    "reminded BOOLEAN DEFAULT FALSE, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
   console.log('✅ DB جاهزة');
 }
 initDB();
@@ -333,7 +344,46 @@ async function analyzeVisitor(msg, context) {
   return callAIJson('claude-haiku-4-5-20251001', 300, prompt);
 }
 
-// ─── Busy Mode ────────────────────────────────────────────────────────────
+// ─── قراءة PDF أو صورة واستخراج تاريخ الانتهاء ──────────────────────────
+async function extractExpiryFromFile(fileUrl, fileType) {
+  try {
+    // تحميل الملف
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    const base64   = Buffer.from(response.data).toString('base64');
+
+    let content;
+    if (fileType === 'pdf') {
+      content = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+        { type: 'text', text: 'استخرج تاريخ الانتهاء أو تاريخ الصلاحية من هذا الملف. أعد JSON فقط:\n{"title":"اسم الوثيقة أو الملف","expiry_date":"YYYY-MM-DD أو null","notes":"أي ملاحظة مهمة"}\nإذا ما وجدت تاريخ انتهاء اجعل expiry_date: null' }
+      ];
+    } else {
+      // صورة
+      const mediaType = fileType === 'png' ? 'image/png' : 'image/jpeg';
+      content = [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+        { type: 'text', text: 'استخرج تاريخ الانتهاء أو تاريخ الصلاحية من هذه الصورة. أعد JSON فقط:\n{"title":"اسم الوثيقة أو الملف","expiry_date":"YYYY-MM-DD أو null","notes":"أي ملاحظة مهمة"}\nإذا ما وجدت تاريخ انتهاء اجعل expiry_date: null' }
+      ];
+    }
+
+    const res = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      messages: [{ role: 'user', content }]
+    }, {
+      headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    });
+
+    const text  = res.data.content[0].text.trim();
+    const clean = text.replace(/^```[a-z]*\n?/, '').replace(/```\s*$/, '').trim();
+    return JSON.parse(clean);
+  } catch(e) {
+    console.error('extractExpiry error:', e.message);
+    return null;
+  }
+}
+
+
 async function isBusy() {
   try { const r = await pool.query("SELECT value FROM settings WHERE key='busy_mode'"); return r.rows[0]?.value==='true'; } catch(e) { return false; }
 }
@@ -380,6 +430,24 @@ function welcomeMsg() {
 function menuMsg(name) {
   return 'هلا ' + name + '! 😊\nوش أقدر أساعدك فيه؟\n\n1️⃣ تسجيل مهمة أو طلب\n2️⃣ جدولة اجتماع\n3️⃣ تذكير عبدالعزيز\n4️⃣ تذكيرك أنت\n\nأرسل الرقم أو اكتب مباشرة 👇';
 }
+
+// ─── Cron: تذكير وثائق منتهية ────────────────────────────────────────────
+cron.schedule('0 9 * * *', async function() {
+  try {
+    const today = todayStr();
+    const res   = await pool.query('SELECT * FROM documents WHERE remind_date=$1 AND reminded=false',[today]);
+    for (const doc of res.rows) {
+      await pool.query('UPDATE documents SET reminded=true WHERE id=$1',[doc.id]);
+      await sendWA(PHONE,
+        '📄 *تذكير وثيقة*\n\n' +
+        '📌 ' + (doc.title||'وثيقة') + '\n' +
+        '📅 تاريخ الانتهاء: ' + doc.expiry_date + '\n' +
+        '⚠️ باقي شهر على الانتهاء!\n\n' +
+        '_مهامي_ ✨'
+      );
+    }
+  } catch(e) { console.error('DocReminder:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: طلبات لم تُؤكد بعد ساعة ──────────────────────────────────────
 cron.schedule('*/5 * * * *', async function() {
@@ -534,29 +602,126 @@ app.post('/webhook', async function(req, res) {
   const body = req.body;
   if (body && body.typeWebhook !== 'incomingMessageReceived') return;
   // قراءة النص من كل أنواع الرسائل
-  let msg = null;
+  let msg      = null;
+  let fileUrl  = null;
+  let fileType = null;
+  let quotedText = null;  // نص الرسالة المُنشَن عليها
   const md = body && body.messageData;
   if (md) {
     // رسالة نصية عادية
     if (md.textMessageData && md.textMessageData.textMessage) {
       msg = md.textMessageData.textMessage.trim();
     }
-    // رسالة منشن أو رسالة بها رابط أو forward
-    else if (md.extendedTextMessageData && md.extendedTextMessageData.text) {
-      msg = md.extendedTextMessageData.text.trim();
+    // رسالة منشن أو forward أو رسالة بها رابط
+    else if (md.extendedTextMessageData) {
+      msg = (md.extendedTextMessageData.text || '').trim();
+      // الرسالة المُنشَن عليها
+      if (md.extendedTextMessageData.contextInfo &&
+          md.extendedTextMessageData.contextInfo.quotedMessage) {
+        const qm = md.extendedTextMessageData.contextInfo.quotedMessage;
+        quotedText = qm.conversation || qm.extendedTextMessage?.text || '';
+      }
     }
-    // رسالة رد على رسالة (quoted)
-    else if (md.quotedMessage && md.quotedMessage.textMessage) {
-      msg = md.quotedMessage.textMessage.trim();
+    // صورة
+    else if (md.imageMessageData) {
+      fileUrl  = md.imageMessageData.downloadUrl || md.imageMessageData.jpegThumbnail;
+      fileType = 'jpeg';
+      msg      = md.imageMessageData.caption || '';
+    }
+    // ملف PDF أو مستند
+    else if (md.documentMessageData) {
+      fileUrl  = md.documentMessageData.downloadUrl;
+      fileType = md.documentMessageData.fileName && md.documentMessageData.fileName.toLowerCase().endsWith('.pdf') ? 'pdf' : 'doc';
+      msg      = md.documentMessageData.caption || md.documentMessageData.fileName || '';
     }
   }
   const from = body && body.senderData && body.senderData.chatId && body.senderData.chatId.replace('@c.us','');
-  if (!msg || !from) return;
-  console.log('📩', from, '—', msg.substring(0,50));
+  if (!from) return;
+  if (!msg && !fileUrl) return;
+
+  // لو في رسالة منشن — ادمجها مع رسالتك عشان نواف يفهم السياق
+  if (quotedText && msg) {
+    msg = msg + '\n[الرسالة المُنشَن عليها: ' + quotedText + ']';
+  } else if (quotedText && !msg) {
+    msg = quotedText;
+  }
+
+  console.log('📩', from, '—', (msg||'').substring(0,80), fileUrl?'[ملف]':'');
+
+  // معالجة الملفات
+  if (fileUrl && from === PHONE) {
+    await handleOwnerFile(from, fileUrl, fileType, msg);
+    return;
+  }
   if (from === PHONE)      { await handleOwner(from, msg);   return; }
   if (from === WIFE_PHONE) { await handleWife(from, msg);    return; }
   await handleVisitor(from, msg);
 });
+
+// ─── معالجة ملفات عبدالعزيز ──────────────────────────────────────────────
+async function handleOwnerFile(from, fileUrl, fileType, caption) {
+  // تحقق لو هو يطلب تذكير من ملف سابق محفوظ
+  const state = userState[from] || { step: 'idle' };
+
+  // لو في state انتظار تأكيد تذكير وثيقة
+  if (state.step === 'waiting_doc_remind_confirm') {
+    const lower = (caption||'').toLowerCase();
+    const isYes = ['نعم','اي','أيوه','ايوه','yes','تمام','موافق'].some(function(w) { return lower.includes(w); });
+    if (isYes && state.pendingDoc) {
+      const doc = state.pendingDoc;
+      // احسب تاريخ التذكير (شهر قبل الانتهاء)
+      const expiry  = new Date(doc.expiry_date);
+      const remind  = new Date(expiry);
+      remind.setMonth(remind.getMonth() - 1);
+      const remindStr = remind.getFullYear() + '-' + String(remind.getMonth()+1).padStart(2,'0') + '-' + String(remind.getDate()).padStart(2,'0');
+      await pool.query('INSERT INTO documents (owner,title,expiry_date,remind_date,file_url) VALUES ($1,$2,$3,$4,$5)',[from,doc.title,doc.expiry_date,remindStr,fileUrl||'']);
+      await sendWA(from, '✅ تم!\n\n📌 ' + doc.title + '\n📅 تاريخ الانتهاء: ' + doc.expiry_date + '\n🔔 سأذكّرك في: ' + remindStr);
+      userState[from] = { step: 'idle' };
+    } else {
+      await sendWA(from, '✅ تمام، ما راح أضيف تذكير');
+      userState[from] = { step: 'idle' };
+    }
+    return;
+  }
+
+  // ملف جديد — قرأه واستخرج التاريخ
+  await sendWA(from, '⏳ أقرأ الملف...');
+
+  if (!fileUrl || fileType === 'doc') {
+    await sendWA(from, '❓ ما أقدر أقرأ هذا النوع من الملفات، أرسل PDF أو صورة');
+    return;
+  }
+
+  const extracted = await extractExpiryFromFile(fileUrl, fileType);
+
+  if (!extracted) {
+    await sendWA(from, '❌ ما قدرت أقرأ الملف، جرب صورة أوضح');
+    return;
+  }
+
+  if (!extracted.expiry_date) {
+    let reply = '📄 قرأت الملف:\n📌 ' + (extracted.title||'وثيقة') + '\n\n';
+    reply += extracted.notes ? '📝 ' + extracted.notes + '\n\n' : '';
+    reply += '❓ ما لقيت تاريخ انتهاء في هذا الملف';
+    await sendWA(from, reply);
+    return;
+  }
+
+  // وجد تاريخ — اسأل عن التذكير
+  const expiry = new Date(extracted.expiry_date);
+  const remind = new Date(expiry);
+  remind.setMonth(remind.getMonth() - 1);
+  const remindStr = remind.getFullYear() + '-' + String(remind.getMonth()+1).padStart(2,'0') + '-' + String(remind.getDate()).padStart(2,'0');
+
+  let reply = '📄 قرأت الملف:\n\n';
+  reply += '📌 ' + (extracted.title||'وثيقة') + '\n';
+  reply += '📅 تاريخ الانتهاء: ' + extracted.expiry_date + '\n';
+  if (extracted.notes) reply += '📝 ' + extracted.notes + '\n';
+  reply += '\nتبيني أذكّرك في ' + remindStr + ' (قبل شهر)؟\n\nأرسل *نعم* أو *لا*';
+
+  await sendWA(from, reply);
+  userState[from] = { step: 'waiting_doc_remind_confirm', pendingDoc: { title: extracted.title||'وثيقة', expiry_date: extracted.expiry_date }, fileUrl };
+}
 
 // ─── Handle Owner ─────────────────────────────────────────────────────────
 async function handleOwner(from, msg) {
@@ -1412,6 +1577,13 @@ app.patch('/working-hours', async function(req,res) {
     await pool.query('INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2',['working_hours',JSON.stringify(req.body)]);
     res.json({ok:true});
   } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.get('/documents', async function(req,res) {
+  try { res.json((await pool.query('SELECT * FROM documents ORDER BY expiry_date')).rows); } catch(e) { res.json([]); }
+});
+app.delete('/documents/:id', async function(req,res) {
+  try { await pool.query('DELETE FROM documents WHERE id=$1',[req.params.id]); res.json({ok:true}); } catch(e) { res.status(500).json({error:e.message}); }
 });
 
 app.get('/', function(req,res) {
