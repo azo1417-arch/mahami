@@ -317,13 +317,13 @@ async function nawafOwnerReply(msg, context) {
     'أنت ذكي جداً مثل Claude AI — تعرف الطب، التقنية، السيارات، التاريخ، العلوم، القانون، الدين، الاقتصاد، وأي موضوع.\n' +
     'للبيانات الحية (طقس، عملات، أخبار) عبدالعزيز يسألك مباشرة وأنت تجيبه من APIs منفصلة.\n' +
     'تتكلم بعامية نجدية سعودية أصيلة — بالضبط زي أهل الرياض.\n' +
-    'أمثلة من الأسلوب الصح:\n' +
+    'كلمات ممنوعة: "ينطيك" (الصح: يعطيك)، "بخبر" (الصح: بقولك)، "كيفك"، "شلونك"، "هلا والله"\n' +
+    'أمثلة صح:\n' +
     '- "ابشر بذكرك فيها إن شاء الله"\n' +
     '- "لا والله ما سويتها، بس الحين بسويها"\n' +
     '- "أي، أوقات يكون الوضع كذا"\n' +
     '- "تبي أقولك نكتة يا قلبي"\n' +
     '- "الجو برا عجاج وملاهيب"\n' +
-    '- "الجو حق فرة وكوب قهوة"\n' +
     'لا تكسير، لا خليجية، لا فصحى. نجدي طبيعي.\n\n' +
     'قواعد ذهبية:\n' +
     '1. لا تقول أبداً "وضح أكثر" أو "ما فهمت" — دائماً اجتهد وأجب بأفضل فهم للرسالة\n' +
@@ -351,8 +351,8 @@ async function nawafVisitorReply(visitorName, msg, history) {
   const prompt =
     'أنت "نواف" المساعد الشخصي لعبدالعزيز على واتساب.\n' +
     'شخصيتك: ودي ومرتب، تتكلم عامية نجدية سعودية أصيلة.\n' +
-    'أمثلة من الأسلوب الصح:\n' +
-    '- "ابشر، بوصل لك طلبك"\n' +
+    'ممنوع: "ينطيك" (الصح: يعطيك)، "بخبر"، "كيفك"، "شلونك"\n' +
+    'أمثلة صح: "ابشر"، "لا والله"، "أي تفضل"، "تمام"\n' +
     '- "لا والله ما وصلني، بس الحين بشوف"\n' +
     '- "أي، تفضل قلي وش تحتاج"\n' +
     '- "تمام، بحطها عند عبدالعزيز"\n' +
@@ -828,7 +828,20 @@ app.post('/webhook', async function(req, res) {
 
   // معالجة الملفات
   if (fileUrl && from === PHONE) {
-    await handleOwnerFile(from, fileUrl, fileType, msg);
+    // لو فيه caption مع الملف — اقرأ مباشرة
+    if (msg && msg.trim()) {
+      // احفظ الملف أيضاً للأسئلة اللاحقة
+      userState[from] = Object.assign(userState[from]||{}, {
+        lastFile: { url: fileUrl, type: fileType }
+      });
+      await handleOwnerFile(from, fileUrl, fileType, msg);
+    } else {
+      // احفظ الملف وانتظر السؤال
+      userState[from] = Object.assign(userState[from]||{}, {
+        lastFile: { url: fileUrl, type: fileType }
+      });
+      await sendWA(from, '📎 وصلني الملف — وش تبي أعرف منه؟');
+    }
     return;
   }
   if (from === PHONE)      { await handleOwner(from, msg);   return; }
@@ -838,73 +851,90 @@ app.post('/webhook', async function(req, res) {
 
 // ─── معالجة ملفات عبدالعزيز ──────────────────────────────────────────────
 async function handleOwnerFile(from, fileUrl, fileType, caption) {
-  // تحقق لو هو يطلب تذكير من ملف سابق محفوظ
   const state = userState[from] || { step: 'idle' };
 
-  // لو في state انتظار تأكيد تذكير وثيقة
+  // لو في انتظار تأكيد تذكير
   if (state.step === 'waiting_doc_remind_confirm') {
     const lower = (caption||'').toLowerCase();
     const isYes = ['نعم','اي','أيوه','ايوه','yes','تمام','موافق'].some(function(w) { return lower.includes(w); });
     if (isYes && state.pendingDoc) {
       const doc = state.pendingDoc;
-      // احسب تاريخ التذكير (شهر قبل الانتهاء)
-      const expiry  = new Date(doc.expiry_date);
-      const remind  = new Date(expiry);
-      remind.setMonth(remind.getMonth() - 1);
+      const expiry = new Date(doc.expiry_date);
+      const remind = new Date(expiry); remind.setMonth(remind.getMonth()-1);
       const remindStr = remind.getFullYear() + '-' + String(remind.getMonth()+1).padStart(2,'0') + '-' + String(remind.getDate()).padStart(2,'0');
       await pool.query('INSERT INTO documents (owner,title,expiry_date,remind_date,file_url) VALUES ($1,$2,$3,$4,$5)',[from,doc.title,doc.expiry_date,remindStr,fileUrl||'']);
-      await sendWA(from, '✅ تم!\n\n📌 ' + doc.title + '\n📅 تاريخ الانتهاء: ' + doc.expiry_date + '\n🔔 سأذكّرك في: ' + remindStr);
+      await sendWA(from, 'تمام، بذكرك في ' + remindStr + ' ✅');
       userState[from] = { step: 'idle' };
     } else {
-      await sendWA(from, '✅ تمام، ما راح أضيف تذكير');
+      await sendWA(from, 'تمام، ما بضيف تذكير');
       userState[from] = { step: 'idle' };
     }
     return;
   }
 
-  // ملف جديد — قرأه واستخرج التاريخ
-  await sendWA(from, '⏳ أقرأ الملف...');
-
   if (!fileUrl || fileType === 'doc') {
-    await sendWA(from, '❓ ما أقدر أقرأ هذا النوع من الملفات، أرسل PDF أو صورة');
+    await sendWA(from, 'ما أقدر أقرأ هذا النوع، أرسل PDF أو صورة');
     return;
   }
 
-  const extracted = await extractExpiryFromFile(fileUrl, fileType);
+  await sendWA(from, '⏳ أقرأ...');
 
-  if (!extracted) {
-    await sendWA(from, '❌ ما قدرت أقرأ الملف، جرب صورة أوضح');
-    return;
+  try {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    const base64   = Buffer.from(response.data).toString('base64');
+    const question = caption && caption.trim() ? caption.trim() : 'اقرأ هذا الملف واستخرج أهم المعلومات منه';
+
+    let content;
+    if (fileType === 'pdf') {
+      content = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+        { type: 'text', text: question + '\n\nأجب بعامية نجدية مختصرة ومفيدة. لو فيه تاريخ انتهاء ذكره بوضوح.' }
+      ];
+    } else {
+      const mediaType = fileType === 'png' ? 'image/png' : 'image/jpeg';
+      content = [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+        { type: 'text', text: question + '\n\nأجب بعامية نجدية مختصرة ومفيدة. صف ما تشوفه وأجب على السؤال.' }
+      ];
+    }
+
+    const res = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514', max_tokens: 600,
+      messages: [{ role: 'user', content }]
+    }, { headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+
+    const answer = res.data.content[0].text.trim();
+    await sendWA(from, answer);
+
+    // لو فيه تاريخ انتهاء في الجواب — اسأل عن التذكير
+    const dateMatch = answer.match(/(\d{4}-\d{2}-\d{2})/);
+    const expiryWords = ['ينتهي','انتهاء','الصلاحية','تاريخ الانتهاء','يوم'];
+    const hasExpiry = dateMatch && expiryWords.some(function(w){ return answer.includes(w); });
+    if (hasExpiry) {
+      const expiryDate = dateMatch[1];
+      const remind = new Date(expiryDate); remind.setMonth(remind.getMonth()-1);
+      const remindStr = remind.getFullYear() + '-' + String(remind.getMonth()+1).padStart(2,'0') + '-' + String(remind.getDate()).padStart(2,'0');
+      await sendWA(from, 'تبيني أذكّرك في ' + remindStr + ' (قبل شهر من الانتهاء)؟\n\nأرسل *نعم* أو *لا*');
+      userState[from] = { step: 'waiting_doc_remind_confirm', pendingDoc: { title: 'وثيقة', expiry_date: expiryDate }, fileUrl };
+    }
+  } catch(e) {
+    console.error('File read error:', e.message);
+    await sendWA(from, 'ما قدرت أقرأ الملف، جرب مرة ثانية');
   }
-
-  if (!extracted.expiry_date) {
-    let reply = '📄 قرأت الملف:\n📌 ' + (extracted.title||'وثيقة') + '\n\n';
-    reply += extracted.notes ? '📝 ' + extracted.notes + '\n\n' : '';
-    reply += '❓ ما لقيت تاريخ انتهاء في هذا الملف';
-    await sendWA(from, reply);
-    return;
-  }
-
-  // وجد تاريخ — اسأل عن التذكير
-  const expiry = new Date(extracted.expiry_date);
-  const remind = new Date(expiry);
-  remind.setMonth(remind.getMonth() - 1);
-  const remindStr = remind.getFullYear() + '-' + String(remind.getMonth()+1).padStart(2,'0') + '-' + String(remind.getDate()).padStart(2,'0');
-
-  let reply = '📄 قرأت الملف:\n\n';
-  reply += '📌 ' + (extracted.title||'وثيقة') + '\n';
-  reply += '📅 تاريخ الانتهاء: ' + extracted.expiry_date + '\n';
-  if (extracted.notes) reply += '📝 ' + extracted.notes + '\n';
-  reply += '\nتبيني أذكّرك في ' + remindStr + ' (قبل شهر)؟\n\nأرسل *نعم* أو *لا*';
-
-  await sendWA(from, reply);
-  userState[from] = { step: 'waiting_doc_remind_confirm', pendingDoc: { title: extracted.title||'وثيقة', expiry_date: extracted.expiry_date }, fileUrl };
 }
 
 // ─── Handle Owner ─────────────────────────────────────────────────────────
 async function handleOwner(from, msg) {
   const state = userState[from] || { step: 'idle' };
   if (state.step !== 'idle') { await handleOwnerState(from, msg, state); return; }
+
+  // لو في ملف محفوظ — استخدمه مع أول سؤال ثم امسحه
+  if (state.lastFile) {
+    const f = state.lastFile;
+    userState[from] = Object.assign({}, state, { lastFile: null });
+    await handleOwnerFile(from, f.url, f.type, msg);
+    return;
+  }
 
   let context = '';
   try {
