@@ -250,6 +250,7 @@ async function analyzeOwner(msg, context) {
     'السياق:\n' + context + '\n' +
     'الوقت: ' + cur + ' التاريخ: ' + today + '\n' +
     'الرسالة: "' + msg + '"\n\n' +
+    (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
     '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_tasks|done|postpone|delete|edit|search|busy|back|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
@@ -302,7 +303,7 @@ async function nawafOwnerReply(msg, context) {
     '6. لو سؤال عام: أجب مباشرة بمعلومات دقيقة\n' +
     '7. لا ترسل إشعارات أو تبلغ عن أي شيء حفظته\n\n' +
     'السياق الحالي:\n' + context + '\n\n' +
-    (lessons ? 'دروس تعلمتها عن عبدالعزيز:\n' + lessons + '\n\n' : '') +
+    (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن الرسالة المقصودة بين علامات الاقتباس، أجب عنها تحديداً\n\n' : '') +
     'عبدالعزيز: ' + msg + '\n\n' +
     'رد مباشر ومفيد بدون مقدمات. إذا سؤال معقد قدم معلومات وافية.';
   return callAI('claude-sonnet-4-20250514', 800, prompt);
@@ -723,9 +724,20 @@ app.post('/webhook', async function(req, res) {
   if (!from) return;
   if (!msg && !fileUrl) return;
 
-  if (quotedText) msg = (msg ? msg + ' ' : '') + '[منشن: ' + quotedText + ']';
+  // لو في منشن — ابنِ رسالة واضحة تحتوي نص المنشن ورسالتك
+  let isQuoted = false;
+  if (quotedText) {
+    isQuoted = true;
+    if (msg && msg.trim()) {
+      // عندك رسالة + منشن — مثل "المهمة هذي سجلتها ولا ز" مع منشن على "رواتب شهر أبريل"
+      msg = msg.trim() + ' — الرسالة المقصودة: "' + quotedText + '"';
+    } else {
+      // منشن بدون رسالة
+      msg = quotedText;
+    }
+  }
 
-  console.log('📩', from, '--', (msg||'').substring(0,100), fileUrl?'[ملف]':'');
+  console.log('📩', from, isQuoted?'[منشن]':'', '--', (msg||'').substring(0,120), fileUrl?'[ملف]':'');
 
   // معالجة الملفات
   if (fileUrl && from === PHONE) {
