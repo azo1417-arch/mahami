@@ -1196,6 +1196,20 @@ async function handleOwner(from, msg) {
     case 'add_reminder': {
       const type  = analysis.action==='add_meeting'?'meeting':analysis.action==='add_reminder'?'reminder':'task';
       const title = analysis.task_title || msg;
+
+      // تحقق لو المهمة موجودة مسبقاً
+      try {
+        const existing = await pool.query(
+          "SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",
+          ['%' + title.substring(0,10) + '%']
+        );
+        if (existing.rows.length > 0) {
+          const t = existing.rows[0];
+          await sendWA(from, 'أي، موجودة عندي — "' + t.title + '"' + (t.date?' يوم '+t.date:'') + (t.time?' الساعة '+fmt12(t.time):''));
+          break;
+        }
+      } catch(e) {}
+
       if (analysis.date && analysis.time) {
         if (type === 'meeting') {
           userState[from] = { step: 'waiting_location', taskTitle: title, taskType: 'meeting', taskNote: analysis.note||'', date: analysis.date, time: analysis.time };
@@ -1231,9 +1245,30 @@ async function handleOwner(from, msg) {
 
     case 'unknown':
     default: {
+      // لو الرسالة تحتوي سؤال عن مهمة موجودة، ابحث فيها أولاً
+      const checkWords = ['سجلتها','سجلته','سجلتم','موجودة','موجود','ثبتتها','حطيتها','عندك','عندي','سبق'];
+      const isChecking = checkWords.some(function(w){ return msg.includes(w); });
+      if (isChecking) {
+        // جيب آخر 5 مهام وسأل نواف يطابق
+        try {
+          const recent = await pool.query('SELECT * FROM tasks ORDER BY created_at DESC LIMIT 5');
+          if (recent.rows.length > 0) {
+            const tasksList = recent.rows.map(function(t){ return '"' + t.title + '"' + (t.date?' يوم '+t.date:'') + (t.time?' الساعة '+fmt12(t.time):''); }).join(', ');
+            const checkPrompt =
+              'عبدالعزيز يسأل: "' + msg + '"\n' +
+              'آخر المهام المسجلة: ' + tasksList + '\n\n' +
+              'هل يسأل عن مهمة من هذه القائمة؟ إذا نعم، أجبه مباشرة بدون إعادة تسجيل.\n' +
+              'مثال: "أي، رواتب أبريل مسجلة عندي — يوم 18 أبريل الساعة 11 ص"\n' +
+              'إذا ما في مهمة مطابقة قل له بوضوح.\n' +
+              'تكلم بعامية نجدية.';
+            const reply = await callAI('claude-sonnet-4-20250514', 300, checkPrompt);
+            if (reply) { await sendWA(from, reply); break; }
+          }
+        } catch(e) {}
+      }
       const reply = await nawafOwnerReply(msg, context);
       if (reply) { await sendWA(from, reply); }
-      else { await sendWA(from, '❓ ما قدرت أعالج طلبك، جرب مرة ثانية'); }
+      else { await sendWA(from, 'قلي وش تقصد بالضبط؟'); }
       break;
     }
   }
