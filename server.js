@@ -267,15 +267,25 @@ async function learnFromOwner(action, detail, originalMsg) {
 
 // ─── AI Caller ────────────────────────────────────────────────────────────
 async function callAI(model, max_tokens, prompt) {
-  try {
-    const res = await axios.post('https://api.anthropic.com/v1/messages', {
-      model, max_tokens,
-      messages: [{ role:'user', content: prompt }]
-    }, {
-      headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version':'2023-06-01', 'content-type':'application/json' }
-    });
-    return res.data.content[0].text.trim();
-  } catch(e) { console.error('AI Error:', e.message); return null; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await axios.post('https://api.anthropic.com/v1/messages', {
+        model, max_tokens,
+        messages: [{ role:'user', content: prompt }]
+      }, {
+        headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version':'2023-06-01', 'content-type':'application/json' }
+      });
+      return res.data.content[0].text.trim();
+    } catch(e) {
+      console.error('AI Error (attempt ' + (attempt+1) + '):', e.message);
+      if (attempt < 2 && (e.response?.status === 529 || e.response?.status === 503 || e.response?.status === 500)) {
+        await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
 }
 
 async function callAIJson(model, max_tokens, prompt) {
