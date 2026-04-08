@@ -525,10 +525,9 @@ async function buildFileFromRequest(request, profile) {
 let googleAuth = null;
 
 async function getGoogleAuth() {
-  if (googleAuth) return googleAuth;
   try {
     const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}');
-    if (!creds.client_email) return null;
+    if (!creds.client_email) { console.error('Google Auth: GOOGLE_CREDENTIALS missing or invalid'); return null; }
     const { google } = require('googleapis');
     const auth = new google.auth.GoogleAuth({
       credentials: creds,
@@ -539,9 +538,10 @@ async function getGoogleAuth() {
         'https://www.googleapis.com/auth/forms'
       ]
     });
-    googleAuth = await auth.getClient();
-    return googleAuth;
-  } catch(e) { console.error('Google Auth:', e.message); return null; }
+    const client = await auth.getClient();
+    console.log('✅ Google Auth OK:', creds.client_email);
+    return client;
+  } catch(e) { console.error('Google Auth Error:', e.message); return null; }
 }
 
 async function createGoogleSheet(title, data) {
@@ -982,10 +982,16 @@ app.post('/webhook', async function(req, res) {
         quotedText = qm.conversation || (qm.extendedTextMessage && qm.extendedTextMessage.text) || null;
       }
     } else if (md.imageMessageData) {
-      fileUrl  = md.imageMessageData.downloadUrl || md.imageMessageData.jpegThumbnail || null;
+      console.log('🖼️ IMAGE DATA:', JSON.stringify({
+        downloadUrl: md.imageMessageData.downloadUrl,
+        hasJpegThumbnail: !!md.imageMessageData.jpegThumbnail,
+        jpegThumbnailLength: md.imageMessageData.jpegThumbnail ? md.imageMessageData.jpegThumbnail.length : 0,
+        caption: md.imageMessageData.caption,
+        keys: Object.keys(md.imageMessageData)
+      }));
+      fileUrl  = md.imageMessageData.downloadUrl || null;
       fileType = 'jpeg';
       msg      = md.imageMessageData.caption || '';
-      // لو ما في رابط تحميل، استخدم الـ thumbnail كصورة
       if (!fileUrl && md.imageMessageData.jpegThumbnail) {
         fileUrl = 'data:image/jpeg;base64,' + md.imageMessageData.jpegThumbnail;
       }
