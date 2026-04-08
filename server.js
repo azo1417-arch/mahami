@@ -550,13 +550,17 @@ async function createGoogleSheet(title, data) {
     const auth   = await getGoogleAuth(); if (!auth) return null;
     const sheets = google.sheets({ version: 'v4', auth });
     const drive  = google.drive({ version: 'v3', auth });
-    const res    = await sheets.spreadsheets.create({
-      requestBody: { properties: { title }, sheets: [{ properties: { title: 'البيانات' } }] }
+
+    // أنشئ الملف عبر Drive مع parents
+    const driveFile = await drive.files.create({
+      requestBody: { name: title, mimeType: 'application/vnd.google-apps.spreadsheet' },
+      fields: 'id'
     });
-    const sid = res.data.spreadsheetId;
+    const sid = driveFile.data.id;
+
     if (data && data.length > 0) {
       await sheets.spreadsheets.values.update({
-        spreadsheetId: sid, range: 'البيانات!A1',
+        spreadsheetId: sid, range: 'Sheet1!A1',
         valueInputOption: 'RAW', requestBody: { values: data }
       });
     }
@@ -571,8 +575,14 @@ async function createGoogleDoc(title, content) {
     const auth  = await getGoogleAuth(); if (!auth) return null;
     const docs  = google.docs({ version: 'v1', auth });
     const drive = google.drive({ version: 'v3', auth });
-    const res   = await docs.documents.create({ requestBody: { title } });
-    const did   = res.data.documentId;
+
+    // أنشئ الملف عبر Drive
+    const driveFile = await drive.files.create({
+      requestBody: { name: title, mimeType: 'application/vnd.google-apps.document' },
+      fields: 'id'
+    });
+    const did = driveFile.data.id;
+
     if (content) {
       await docs.documents.batchUpdate({
         documentId: did,
