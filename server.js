@@ -133,6 +133,19 @@ async function sendWA(to, message) {
   } catch(e) { console.error('WA Error:', e.message); }
 }
 
+async function sendWAFile(to, fileBase64, filename, caption) {
+  try {
+    const chatId = to.includes('@') ? to : to + '@c.us';
+    const ext = filename.split('.').pop().toLowerCase();
+    const mimeMap = { csv: 'text/csv', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', html: 'text/html', txt: 'text/plain' };
+    const mimeType = mimeMap[ext] || 'application/octet-stream';
+    await axios.post(GA_URL + '/sendFileByUpload/' + GA_TOKEN, {
+      chatId, caption: caption || '', fileName: filename,
+      file: 'data:' + mimeType + ';base64,' + fileBase64
+    });
+  } catch(e) { console.error('WA File Error:', e.message); }
+}
+
 function fmt12(t) {
   if (!t) return '';
   const [h,m] = t.split(':').map(Number);
@@ -620,11 +633,27 @@ async function createGoogleForm(title, questions) {
   } catch(e) { console.error('createForm:', e.message); return null; }
 }
 
-async function buildGoogleFile(request, profile) {
+async function buildHtmlFile(request, profile) {
   const prompt =
     'عبدالعزيز يطلب: "' + request + '"\n\n' +
     (profile ? 'معلومات عنه:\n' + profile + '\n\n' : '') +
-    'أعد JSON فقط:\n' +
+    'ابن صفحة HTML كاملة ومنسقة تحتوي على المحتوى المطلوب.\n\n' +
+    'قواعد:\n' +
+    '- صفحة HTML كاملة مع CSS مدمج\n' +
+    '- اتجاه RTL، خط عربي (Cairo من Google Fonts)\n' +
+    '- تصميم احترافي وجميل، ألوان هادئة\n' +
+    '- لو جدول: اعمل <table> منسق مع headers واضحة\n' +
+    '- لو تقرير: اعمل أقسام واضحة مع عناوين\n' +
+    '- لو قائمة: اعمل قائمة منظمة ومرتبة\n' +
+    '- لو استبيان/نموذج: اعمل <form> جميل مع حقول\n' +
+    '- أضف تاريخ اليوم في الأسفل\n' +
+    '- أعد HTML فقط بدون أي نص خارجه';
+  return callAI('claude-sonnet-4-20250514', 3000, prompt);
+}
+
+
+async function buildGoogleFile(request, profile) {
+  const prompt =
     '{"type":"sheet|doc|form","title":"عنوان","data":[["عمود1"],["قيمة1"]],"content":"نص","questions":["سؤال1"]}\n\n' +
     '- جداول/Excel/بيانات = sheet\n' +
     '- وثائق/تقارير/خطط = doc\n' +
@@ -1584,7 +1613,7 @@ async function handleOwner(from, msg) {
       const request = analysis.task_title || msg;
       // لو الطلب مبهم — اسأل عن التفاصيل
       const words = request.trim().split(/\s+/).length;
-      const hasDetails = request.match(/جدول|تقرير|خطة|قائمة|نموذج|استبيان|أعمدة|بيانات|sheet|doc|form/i);
+      const hasDetails = request.match(/جدول|تقرير|خطة|قائمة|نموذج|استبيان|أعمدة|بيانات/i);
       if (words < 5 && !hasDetails) {
         userState[from] = { step: 'waiting_file_details', partialRequest: request };
         await sendWA(from, '📄 ابني لك الملف — بس وضح أكثر:\n\n• وش المحتوى اللي تبيه بالضبط؟\n• نوع الملف: جدول، تقرير، قائمة، نموذج؟\n• فيه بيانات أو أعمدة معينة؟');
@@ -1593,30 +1622,25 @@ async function handleOwner(from, msg) {
       await sendWA(from, '⏳ أبني الملف...');
       try {
         const profile = await getProfile();
-        const fileData = await buildGoogleFile(request, profile);
-        if (!fileData) { await sendWA(from, '❌ ما قدرت أفهم شكل الملف، وضّح أكثر'); break; }
-        console.log('📄 buildGoogleFile result:', JSON.stringify(fileData).substring(0,200));
-        let link = null;
-        let icon = '📄';
-        if (fileData.type === 'sheet') {
-          icon = '📊';
-          link = await createGoogleSheet(fileData.title || request, fileData.data || []);
-        } else if (fileData.type === 'form') {
-          icon = '📋';
-          link = await createGoogleForm(fileData.title || request, fileData.questions || []);
-        } else {
-          icon = '📝';
-          link = await createGoogleDoc(fileData.title || request, fileData.content || '');
-        }
-        if (!link) {
-          console.error('❌ Google file creation returned null for type:', fileData.type);
-          await sendWA(from, '❌ صار خطأ في Google Drive. تأكد إن الـ GOOGLE_CREDENTIALS صحيح في Railway');
-          break;
-        }
+        const htmlContent = await buildHtmlFile(request, profile);
+        if (!htmlContent) { await sendWA(from, '❌ ما قدرت أبني الملف، وضّح أكثر'); break; }
+
+        // احفظ الملف في Railway
+        const filename = 'file_' + Date.now() + '.html';
+        const filepath = pathM.join(__dirname, 'generated', filename);
+        const dir = pathM.join(__dirname, 'generated');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(filepath, htmlContent, 'utf8');
+
+        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+          ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
+          : 'https://mahami-production.up.railway.app';
+        const link = baseUrl + '/files/' + filename;
+
         await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
-          [from, fileData.title||request, fileData.type, link]).catch(()=>{});
-        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: fileData.title, link, request, type: fileData.type } });
-        await sendWA(from, icon + ' جاهز!\n\n' + (fileData.title||request) + '\n\n🔗 ' + link + '\n\nيفتح مباشرة في المتصفح 😊\nلو تبي تعدّل قولي');
+          [from, request, 'html', link]).catch(()=>{});
+        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link, request, type: 'html' } });
+        await sendWA(from, '📄 جاهز!\n\n' + request + '\n\n🔗 ' + link + '\n\nافتحه في المتصفح — تنسيق ممتاز ✨\nتقدر تطبعه أو تحفظه PDF من المتصفح\nلو تبي تعدّل قولي');
       } catch(e) {
         console.error('create_file error:', e.message);
         await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,100));
@@ -1629,17 +1653,21 @@ async function handleOwner(from, msg) {
       if (!st2.lastGeneratedFile) { await sendWA(from, 'ما عندي ملف سابق أعدّل عليه'); break; }
       const editReq = analysis.task_title || msg;
       await sendWA(from, '⏳ أعدّل...');
-      const prof2   = await getProfile();
-      const combined = st2.lastGeneratedFile.request + ' — تعديل: ' + editReq;
-      const fd2     = await buildGoogleFile(combined, prof2);
-      if (!fd2) { await sendWA(from, 'ما قدرت أعدّل، وضّح أكثر'); break; }
-      let link2 = null;
-      if (fd2.type === 'sheet') link2 = await createGoogleSheet(fd2.title||combined, fd2.data||[]);
-      else if (fd2.type === 'form') link2 = await createGoogleForm(fd2.title||combined, fd2.questions||[]);
-      else link2 = await createGoogleDoc(fd2.title||combined, fd2.content||'');
-      if (!link2) { await sendWA(from, 'صار خطأ في التعديل'); break; }
-      userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: Object.assign({}, st2.lastGeneratedFile, { request: combined, link: link2 }) });
-      await sendWA(from, '✅ تم التعديل!\n\n🔗 ' + link2);
+      try {
+        const prof2 = await getProfile();
+        const combined = st2.lastGeneratedFile.request + ' — تعديل: ' + editReq;
+        const htmlContent = await buildHtmlFile(combined, prof2);
+        if (!htmlContent) { await sendWA(from, 'ما قدرت أعدّل، وضّح أكثر'); break; }
+        const filename = 'file_' + Date.now() + '.html';
+        const filepath = pathM.join(__dirname, 'generated', filename);
+        const dir = pathM.join(__dirname, 'generated');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(filepath, htmlContent, 'utf8');
+        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+        const link2 = baseUrl + '/files/' + filename;
+        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: Object.assign({}, st2.lastGeneratedFile, { request: combined, link: link2 }) });
+        await sendWA(from, '✅ تم التعديل!\n\n🔗 ' + link2);
+      } catch(e) { await sendWA(from, '❌ صار خطأ في التعديل'); }
       break;
     }
 
@@ -1981,18 +2009,21 @@ async function handleOwnerState(from, msg, state) {
   if (state.step === 'waiting_file_details') {
     const fullRequest = (state.partialRequest || '') + ' — ' + msg;
     await sendWA(from, '⏳ أبني الملف...');
-    const profile = await getProfile();
-    const fileData = await buildGoogleFile(fullRequest, profile);
-    if (!fileData) { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); userState[from] = { step: 'idle' }; return; }
-    let link = null; let icon = '📄';
-    if (fileData.type === 'sheet') { icon = '📊'; link = await createGoogleSheet(fileData.title||fullRequest, fileData.data||[]); }
-    else if (fileData.type === 'form') { icon = '📋'; link = await createGoogleForm(fileData.title||fullRequest, fileData.questions||[]); }
-    else { icon = '📝'; link = await createGoogleDoc(fileData.title||fullRequest, fileData.content||''); }
-    if (!link) { await sendWA(from, 'صار خطأ في إنشاء الملف، جرب مرة ثانية'); userState[from] = { step: 'idle' }; return; }
-    await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
-      [from, fileData.title||fullRequest, fileData.type, link]).catch(()=>{});
-    userState[from] = { step: 'idle', lastGeneratedFile: { title: fileData.title, link, request: fullRequest, type: fileData.type } };
-    await sendWA(from, icon + ' جاهز!\n\n' + (fileData.title||fullRequest) + '\n\n🔗 ' + link + '\n\nيفتح مباشرة في المتصفح 😊\nلو تبي تعدّل قولي');
+    try {
+      const profile = await getProfile();
+      const htmlContent = await buildHtmlFile(fullRequest, profile);
+      if (!htmlContent) { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); userState[from] = { step: 'idle' }; return; }
+      const filename = 'file_' + Date.now() + '.html';
+      const filepath = pathM.join(__dirname, 'generated', filename);
+      const dir = pathM.join(__dirname, 'generated');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filepath, htmlContent, 'utf8');
+      const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+      const link = baseUrl + '/files/' + filename;
+      await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)', [from, fullRequest, 'html', link]).catch(()=>{});
+      userState[from] = { step: 'idle', lastGeneratedFile: { title: fullRequest, link, request: fullRequest, type: 'html' } };
+      await sendWA(from, '📄 جاهز!\n\n🔗 ' + link + '\n\nافتحه في المتصفح — تنسيق ممتاز ✨\nلو تبي تعدّل قولي');
+    } catch(e) { await sendWA(from, '❌ صار خطأ، جرب مرة ثانية'); userState[from] = { step: 'idle' }; }
     return;
   }
 
