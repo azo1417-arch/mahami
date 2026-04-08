@@ -553,15 +553,25 @@ async function createGoogleSheet(title, data) {
     const sheets = google.sheets({ version: 'v4', auth });
     const drive  = google.drive({ version: 'v3', auth });
 
-    const driveFile = await drive.files.create({
-      requestBody: { name: title, mimeType: 'application/vnd.google-apps.spreadsheet', parents: [DRIVE_FOLDER_ID] },
-      fields: 'id'
+    // أنشئ الملف
+    const res = await sheets.spreadsheets.create({
+      requestBody: { properties: { title }, sheets: [{ properties: { title: 'البيانات' } }] }
     });
-    const sid = driveFile.data.id;
+    const sid = res.data.spreadsheetId;
+
+    // انقله للفولدر المشترك
+    const currentParents = await drive.files.get({ fileId: sid, fields: 'parents' });
+    const prevParents = (currentParents.data.parents || []).join(',');
+    await drive.files.update({
+      fileId: sid,
+      addParents: DRIVE_FOLDER_ID,
+      removeParents: prevParents,
+      fields: 'id, parents'
+    });
 
     if (data && data.length > 0) {
       await sheets.spreadsheets.values.update({
-        spreadsheetId: sid, range: 'Sheet1!A1',
+        spreadsheetId: sid, range: 'البيانات!A1',
         valueInputOption: 'RAW', requestBody: { values: data }
       });
     }
@@ -577,11 +587,18 @@ async function createGoogleDoc(title, content) {
     const docs  = google.docs({ version: 'v1', auth });
     const drive = google.drive({ version: 'v3', auth });
 
-    const driveFile = await drive.files.create({
-      requestBody: { name: title, mimeType: 'application/vnd.google-apps.document', parents: [DRIVE_FOLDER_ID] },
-      fields: 'id'
+    const res = await docs.documents.create({ requestBody: { title } });
+    const did = res.data.documentId;
+
+    // انقله للفولدر المشترك
+    const currentParents = await drive.files.get({ fileId: did, fields: 'parents' });
+    const prevParents = (currentParents.data.parents || []).join(',');
+    await drive.files.update({
+      fileId: did,
+      addParents: DRIVE_FOLDER_ID,
+      removeParents: prevParents,
+      fields: 'id, parents'
     });
-    const did = driveFile.data.id;
 
     if (content) {
       await docs.documents.batchUpdate({
