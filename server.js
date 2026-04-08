@@ -553,29 +553,20 @@ async function createGoogleSheet(title, data) {
     const sheets = google.sheets({ version: 'v4', auth });
     const drive  = google.drive({ version: 'v3', auth });
 
-    // أنشئ الملف
-    const res = await sheets.spreadsheets.create({
-      requestBody: { properties: { title }, sheets: [{ properties: { title: 'البيانات' } }] }
+    const driveFile = await drive.files.create({
+      requestBody: { name: title, mimeType: 'application/vnd.google-apps.spreadsheet', parents: [DRIVE_FOLDER_ID] },
+      supportsAllDrives: true,
+      fields: 'id'
     });
-    const sid = res.data.spreadsheetId;
-
-    // انقله للفولدر المشترك
-    const currentParents = await drive.files.get({ fileId: sid, fields: 'parents' });
-    const prevParents = (currentParents.data.parents || []).join(',');
-    await drive.files.update({
-      fileId: sid,
-      addParents: DRIVE_FOLDER_ID,
-      removeParents: prevParents,
-      fields: 'id, parents'
-    });
+    const sid = driveFile.data.id;
 
     if (data && data.length > 0) {
       await sheets.spreadsheets.values.update({
-        spreadsheetId: sid, range: 'البيانات!A1',
+        spreadsheetId: sid, range: 'Sheet1!A1',
         valueInputOption: 'RAW', requestBody: { values: data }
       });
     }
-    await drive.permissions.create({ fileId: sid, requestBody: { role: 'reader', type: 'anyone' } });
+    await drive.permissions.create({ fileId: sid, supportsAllDrives: true, requestBody: { role: 'reader', type: 'anyone' } });
     return 'https://docs.google.com/spreadsheets/d/' + sid;
   } catch(e) { console.error('createSheet:', e.message); return null; }
 }
@@ -587,18 +578,12 @@ async function createGoogleDoc(title, content) {
     const docs  = google.docs({ version: 'v1', auth });
     const drive = google.drive({ version: 'v3', auth });
 
-    const res = await docs.documents.create({ requestBody: { title } });
-    const did = res.data.documentId;
-
-    // انقله للفولدر المشترك
-    const currentParents = await drive.files.get({ fileId: did, fields: 'parents' });
-    const prevParents = (currentParents.data.parents || []).join(',');
-    await drive.files.update({
-      fileId: did,
-      addParents: DRIVE_FOLDER_ID,
-      removeParents: prevParents,
-      fields: 'id, parents'
+    const driveFile = await drive.files.create({
+      requestBody: { name: title, mimeType: 'application/vnd.google-apps.document', parents: [DRIVE_FOLDER_ID] },
+      supportsAllDrives: true,
+      fields: 'id'
     });
+    const did = driveFile.data.id;
 
     if (content) {
       await docs.documents.batchUpdate({
@@ -606,7 +591,7 @@ async function createGoogleDoc(title, content) {
         requestBody: { requests: [{ insertText: { location: { index: 1 }, text: content } }] }
       });
     }
-    await drive.permissions.create({ fileId: did, requestBody: { role: 'reader', type: 'anyone' } });
+    await drive.permissions.create({ fileId: did, supportsAllDrives: true, requestBody: { role: 'reader', type: 'anyone' } });
     return 'https://docs.google.com/document/d/' + did;
   } catch(e) { console.error('createDoc:', e.message); return null; }
 }
@@ -629,7 +614,8 @@ async function createGoogleForm(title, questions) {
         }
       });
     }
-    await drive.permissions.create({ fileId: fid, requestBody: { role: 'reader', type: 'anyone' } });
+    await drive.files.update({ fileId: fid, addParents: DRIVE_FOLDER_ID, supportsAllDrives: true, fields: 'id' });
+    await drive.permissions.create({ fileId: fid, supportsAllDrives: true, requestBody: { role: 'reader', type: 'anyone' } });
     return 'https://docs.google.com/forms/d/' + fid;
   } catch(e) { console.error('createForm:', e.message); return null; }
 }
