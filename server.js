@@ -1701,9 +1701,10 @@ async function handleOwner(from, msg) {
         if (!htmlContent) { await sendWA(from, '❌ ما قدرت أبني الملف، وضّح أكثر'); break; }
 
         // تحقق من نوع الملف
-        const isTable  = request.match(/جدول|اكسل|بيانات|متابعة/i);
-        const isSurvey = request.match(/استبيان|نموذج|فورم/i);
+        const isTable  = request.match(/جدول|اكسل|sheet|بيانات|متابعة|أعمدة|عمود/i);
+        const isSurvey = request.match(/استبيان|نموذج|فورم|form/i);
         const driveType = isTable ? 'sheet' : isSurvey ? null : 'doc';
+        console.log('📄 File type:', driveType, '| request:', request.substring(0,50));
 
         // جرب الحفظ في Drive أولاً
         let driveLink = null;
