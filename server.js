@@ -110,6 +110,14 @@ async function initDB() {
     "filepath TEXT NOT NULL, " +
     "created_at TIMESTAMP DEFAULT NOW())"
   );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS html_files (" +
+    "id TEXT PRIMARY KEY, " +
+    "owner TEXT NOT NULL, " +
+    "title TEXT, " +
+    "content TEXT NOT NULL, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
 
   await pool.query(
     "CREATE TABLE IF NOT EXISTS owner_profile (" +
@@ -1668,7 +1676,6 @@ async function handleOwner(from, msg) {
 
     case 'create_file': {
       const request = analysis.task_title || msg;
-      // لو الطلب مبهم — اسأل عن التفاصيل
       const words = request.trim().split(/\s+/).length;
       const hasDetails = request.match(/جدول|تقرير|خطة|قائمة|نموذج|استبيان|أعمدة|بيانات/i);
       if (words < 5 && !hasDetails) {
@@ -1681,23 +1688,12 @@ async function handleOwner(from, msg) {
         const profile = await getProfile();
         const htmlContent = await buildHtmlFile(request, profile);
         if (!htmlContent) { await sendWA(from, '❌ ما قدرت أبني الملف، وضّح أكثر'); break; }
-
-        // احفظ الملف في Railway
-        const filename = 'file_' + Date.now() + '.html';
-        const filepath = pathM.join(__dirname, 'generated', filename);
-        const dir = pathM.join(__dirname, 'generated');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(filepath, htmlContent, 'utf8');
-
-        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
-          ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
-          : 'https://mahami-production.up.railway.app';
-        const link = baseUrl + '/files/' + filename;
-
-        await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
-          [from, request, 'html', link]).catch(()=>{});
-        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link, request, type: 'html' } });
-        await sendWA(from, '📄 جاهز!\n\n' + request + '\n\n🔗 ' + link + '\n\nافتحه في المتصفح — تنسيق ممتاز ✨\nتقدر تطبعه أو تحفظه PDF من المتصفح\nلو تبي تعدّل قولي');
+        const fileId = 'f' + Date.now();
+        await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, request, htmlContent]);
+        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+        const link = baseUrl + '/f/' + fileId;
+        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link, request, type: 'html', fileId } });
+        await sendWA(from, '📄 جاهز!\n\n' + request + '\n\n🔗 ' + link + '\n\nافتحه في المتصفح ✨\nلو تبي تعدّل قولي');
       } catch(e) {
         console.error('create_file error:', e.message);
         await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,100));
@@ -1715,14 +1711,11 @@ async function handleOwner(from, msg) {
         const combined = st2.lastGeneratedFile.request + ' — تعديل: ' + editReq;
         const htmlContent = await buildHtmlFile(combined, prof2);
         if (!htmlContent) { await sendWA(from, 'ما قدرت أعدّل، وضّح أكثر'); break; }
-        const filename = 'file_' + Date.now() + '.html';
-        const filepath = pathM.join(__dirname, 'generated', filename);
-        const dir = pathM.join(__dirname, 'generated');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(filepath, htmlContent, 'utf8');
+        const fileId = 'f' + Date.now();
+        await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, combined, htmlContent]);
         const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
-        const link2 = baseUrl + '/files/' + filename;
-        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: Object.assign({}, st2.lastGeneratedFile, { request: combined, link: link2 }) });
+        const link2 = baseUrl + '/f/' + fileId;
+        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: Object.assign({}, st2.lastGeneratedFile, { request: combined, link: link2, fileId }) });
         await sendWA(from, '✅ تم التعديل!\n\n🔗 ' + link2);
       } catch(e) { await sendWA(from, '❌ صار خطأ في التعديل'); }
       break;
@@ -2070,16 +2063,12 @@ async function handleOwnerState(from, msg, state) {
       const profile = await getProfile();
       const htmlContent = await buildHtmlFile(fullRequest, profile);
       if (!htmlContent) { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); userState[from] = { step: 'idle' }; return; }
-      const filename = 'file_' + Date.now() + '.html';
-      const filepath = pathM.join(__dirname, 'generated', filename);
-      const dir = pathM.join(__dirname, 'generated');
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(filepath, htmlContent, 'utf8');
+      const fileId = 'f' + Date.now();
+      await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, fullRequest, htmlContent]);
       const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
-      const link = baseUrl + '/files/' + filename;
-      await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)', [from, fullRequest, 'html', link]).catch(()=>{});
-      userState[from] = { step: 'idle', lastGeneratedFile: { title: fullRequest, link, request: fullRequest, type: 'html' } };
-      await sendWA(from, '📄 جاهز!\n\n🔗 ' + link + '\n\nافتحه في المتصفح — تنسيق ممتاز ✨\nلو تبي تعدّل قولي');
+      const link = baseUrl + '/f/' + fileId;
+      userState[from] = { step: 'idle', lastGeneratedFile: { title: fullRequest, link, request: fullRequest, type: 'html', fileId } };
+      await sendWA(from, '📄 جاهز!\n\n🔗 ' + link + '\n\nافتحه في المتصفح ✨\nلو تبي تعدّل قولي');
     } catch(e) { await sendWA(from, '❌ صار خطأ، جرب مرة ثانية'); userState[from] = { step: 'idle' }; }
     return;
   }
@@ -2559,6 +2548,16 @@ app.get('/documents', async function(req,res) {
 });
 app.delete('/documents/:id', async function(req,res) {
   try { await pool.query('DELETE FROM documents WHERE id=$1',[req.params.id]); res.json({ok:true}); } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+// ─── عرض الملفات من DB ────────────────────────────────────────────────────
+app.get('/f/:id', async function(req,res) {
+  try {
+    const r = await pool.query('SELECT * FROM html_files WHERE id=$1',[req.params.id]);
+    if (!r.rows.length) return res.status(404).send('الملف غير موجود');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(r.rows[0].content);
+  } catch(e) { res.status(500).send('خطأ'); }
 });
 
 app.get('/', function(req,res) {
