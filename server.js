@@ -156,6 +156,42 @@ async function sendWAFile(to, fileBase64, filename, caption) {
   } catch(e) { console.error('WA File Error:', e.message); }
 }
 
+async function transcribeAudio(audioUrl) {
+  try {
+    const OPENAI_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_KEY) return null;
+
+    // حمّل ملف الصوت
+    let audioBuffer;
+    try {
+      const r = await axios.get(audioUrl, {
+        responseType: 'arraybuffer', timeout: 30000,
+        headers: { 'Authorization': 'Bearer ' + GA_TOKEN }
+      });
+      audioBuffer = r.data;
+    } catch(e) {
+      const r = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 30000 });
+      audioBuffer = r.data;
+    }
+
+    // أرسل لـ Whisper API
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', Buffer.from(audioBuffer), { filename: 'audio.ogg', contentType: 'audio/ogg' });
+    form.append('model', 'whisper-1');
+    form.append('language', 'ar');
+
+    const res = await axios.post('https://api.openai.com/v1/audio/transcriptions', form, {
+      headers: { ...form.getHeaders(), 'Authorization': 'Bearer ' + OPENAI_KEY },
+      timeout: 30000
+    });
+    return res.data.text || null;
+  } catch(e) {
+    console.error('Whisper error:', e.message);
+    return null;
+  }
+}
+
 async function exportDriveFilePdf(driveLink, title) {
   try {
     // استخرج الـ fileId من الرابط
@@ -1209,11 +1245,33 @@ app.post('/webhook', async function(req, res) {
   // معالجة الرسائل الصوتية
   if (fileType === 'audio') {
     if (from === PHONE) {
-      await sendWA(from, '🎤 وصلتني الرسالة الصوتية — للأسف ما أقدر أسمعها الحين، كتبلي اللي تبيه 😊');
+      await sendWA(from, '🎤 أسمع...');
+      const audioUrl = (md && (md.audioMessageData || md.voiceMessageData)) ? ((md.audioMessageData || md.voiceMessageData).downloadUrl) : null;
+      if (audioUrl) {
+        const text = await transcribeAudio(audioUrl);
+        if (text && text.trim()) {
+          console.log('🎤 Transcribed:', text);
+          await handleOwner(from, text);
+        } else {
+          await sendWA(from, '❌ ما قدرت أفهم الصوت، كتبلي اللي تبيه 😊');
+        }
+      } else {
+        await sendWA(from, '❌ ما وصلني الصوت، كتبلي اللي تبيه 😊');
+      }
     } else {
       const visitor = await pool.query('SELECT * FROM visitors WHERE phone=$1',[from]).then(r=>r.rows[0]).catch(()=>null);
       const vName = (visitor && visitor.name) || 'الزائر';
-      await sendWA(from, 'هلا ' + vName + '! 😊 وصلتني الرسالة الصوتية بس ما أقدر أسمعها، ممكن تكتب طلبك؟');
+      const audioUrl = (md && (md.audioMessageData || md.voiceMessageData)) ? ((md.audioMessageData || md.voiceMessageData).downloadUrl) : null;
+      if (audioUrl) {
+        const text = await transcribeAudio(audioUrl);
+        if (text && text.trim()) {
+          await handleVisitor(from, text);
+        } else {
+          await sendWA(from, 'هلا ' + vName + '! 😊 ما قدرت أفهم الصوت، ممكن تكتب طلبك؟');
+        }
+      } else {
+        await sendWA(from, 'هلا ' + vName + '! 😊 ما وصلني الصوت، ممكن تكتب طلبك؟');
+      }
     }
     return;
   }
