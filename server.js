@@ -1208,6 +1208,7 @@ app.post('/webhook', async function(req, res) {
       console.log('🎤 AUDIO URL:', audioData.downloadUrl);
       msg = '__audio__';
       fileType = 'audio';
+      fileUrl = audioData.downloadUrl || null;
     } else if (typeMsg === 'documentMessage' || md.documentMessageData) {
       const docData = md.documentMessageData || {};
       fileUrl  = docData.downloadUrl;
@@ -1246,9 +1247,8 @@ app.post('/webhook', async function(req, res) {
   if (fileType === 'audio') {
     if (from === PHONE) {
       await sendWA(from, '🎤 أسمع...');
-      const audioUrl = (md && (md.audioMessageData || md.voiceMessageData)) ? ((md.audioMessageData || md.voiceMessageData).downloadUrl) : null;
-      if (audioUrl) {
-        const text = await transcribeAudio(audioUrl);
+      if (fileUrl) {
+        const text = await transcribeAudio(fileUrl);
         if (text && text.trim()) {
           console.log('🎤 Transcribed:', text);
           await handleOwner(from, text);
@@ -1261,9 +1261,8 @@ app.post('/webhook', async function(req, res) {
     } else {
       const visitor = await pool.query('SELECT * FROM visitors WHERE phone=$1',[from]).then(r=>r.rows[0]).catch(()=>null);
       const vName = (visitor && visitor.name) || 'الزائر';
-      const audioUrl = (md && (md.audioMessageData || md.voiceMessageData)) ? ((md.audioMessageData || md.voiceMessageData).downloadUrl) : null;
-      if (audioUrl) {
-        const text = await transcribeAudio(audioUrl);
+      if (fileUrl) {
+        const text = await transcribeAudio(fileUrl);
         if (text && text.trim()) {
           await handleVisitor(from, text);
         } else {
@@ -2836,9 +2835,12 @@ async function saveFileToDrive(title, htmlContent, type) {
 
       // أضف البيانات
       if (values.length > 0) {
+        // جيب اسم الشيت الأول
+        const ssData = await sheets.spreadsheets.get({ spreadsheetId: fileId });
+        const sheetName = ssData.data.sheets[0].properties.title;
         await sheets.spreadsheets.values.update({
           spreadsheetId: fileId,
-          range: 'Sheet1!A1',
+          range: sheetName + '!A1',
           valueInputOption: 'RAW',
           requestBody: { values }
         });
