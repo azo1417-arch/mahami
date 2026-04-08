@@ -154,6 +154,33 @@ async function sendWAFile(to, fileBase64, filename, caption) {
   } catch(e) { console.error('WA File Error:', e.message); }
 }
 
+async function exportDriveFilePdf(driveLink, title) {
+  try {
+    // استخرج الـ fileId من الرابط
+    const match = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (!match) return null;
+    const fileId = match[1];
+
+    const token = await getOAuthToken();
+    if (!token) return null;
+    const { google } = require('googleapis');
+    const client = await getOAuthClient();
+    client.setCredentials(token);
+    const drive = google.drive({ version: 'v3', auth: client });
+
+    // صدّر كـ PDF
+    const res = await drive.files.export(
+      { fileId, mimeType: 'application/pdf' },
+      { responseType: 'arraybuffer' }
+    );
+    const base64 = Buffer.from(res.data).toString('base64');
+    return base64;
+  } catch(e) {
+    console.error('exportDriveFilePdf:', e.message);
+    return null;
+  }
+}
+
 function fmt12(t) {
   if (!t) return '';
   const [h,m] = t.split(':').map(Number);
@@ -336,6 +363,7 @@ async function analyzeOwner(msg, context) {
     '- وين/موقع/خريطة/المسافة/كم المسافة/اتجاهات = maps (task_title=الاستفسار)\n' +
     '- سوّ/اعمل/ابن جدول أو ملف أو تقرير أو خطة = create_file (task_title=وصف الطلب)\n' +
     '- عدّل/غيّر في الملف = edit_file (task_title=التعديل المطلوب)\n' +
+    '- أرسلني الملف PDF/بي دي اف/صدّره PDF = export_pdf\n' +
     '- وش تعرف عني/ملفي/معلوماتي = show_profile\n' +
     '- الجو/الطقس/حرارة/بارد/حار = weather (task_title = اسم المدينة لو ذكرت)\n' +
     '- سعر الدولار/العملات/الريال/صرف = currency\n' +
@@ -642,14 +670,23 @@ async function createGoogleForm(title, questions) {
 }
 
 async function buildHtmlFile(request, profile) {
-  // حدد النوع أولاً
-  const isTable      = request.match(/جدول|اكسل|بيانات|متابعة|قائمة أسعار|جدول زمني/i);
-  const isSurvey     = request.match(/استبيان|نموذج|فورم|استفسار/i);
-  const isDoc        = !isTable && !isSurvey;
+  const isTable  = request.match(/جدول|اكسل|sheet|بيانات|متابعة|أعمدة|عمود/i);
+  const isSurvey = request.match(/استبيان|نموذج|فورم|form/i);
 
-  if (isTable) return buildCsvHtml(request, profile);
-  if (isSurvey) return buildSurveyHtml(request, profile);
-  return buildDocHtml(request, profile);
+  let html;
+  if (isTable) html = await buildCsvHtml(request, profile);
+  else if (isSurvey) html = await buildSurveyHtml(request, profile);
+  else html = await buildDocHtml(request, profile);
+
+  if (!html) return null;
+  // تنظيف أي markdown code blocks
+  html = html.replace(/^```html\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+  // تأكد يبدأ بـ <!DOCTYPE أو <html
+  if (!html.startsWith('<!') && !html.startsWith('<html')) {
+    const idx = html.indexOf('<html');
+    if (idx > 0) html = html.substring(idx);
+  }
+  return html;
 }
 
 async function buildCsvHtml(request, profile) {
@@ -1734,6 +1771,25 @@ async function handleOwner(from, msg) {
       } catch(e) {
         console.error('create_file error:', e.message);
         await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,100));
+      }
+      break;
+    }
+
+    case 'export_pdf': {
+      const st = userState[from] || {};
+      if (!st.lastGeneratedFile) { await sendWA(from, '❓ ما عندي ملف أحوّله، سوّ ملف أولاً'); break; }
+      await sendWA(from, '⏳ أحوّل الملف PDF...');
+      try {
+        const pdfBase64 = await exportDriveFilePdf(st.lastGeneratedFile.link, st.lastGeneratedFile.title || 'ملف');
+        if (pdfBase64) {
+          const filename = (st.lastGeneratedFile.title || 'ملف').substring(0, 30) + '.pdf';
+          await sendWAFile(from, pdfBase64, filename, '📄 ' + (st.lastGeneratedFile.title || 'ملف'));
+        } else {
+          await sendWA(from, '❌ ما قدرت أحوّل الملف. افتح الرابط وحمّله من: ملف ← تنزيل ← PDF\n\n🔗 ' + st.lastGeneratedFile.link);
+        }
+      } catch(e) {
+        console.error('export_pdf error:', e.message);
+        await sendWA(from, '❌ صار خطأ في التحويل');
       }
       break;
     }
