@@ -118,6 +118,8 @@ async function initDB() {
     "content TEXT NOT NULL, " +
     "created_at TIMESTAMP DEFAULT NOW())"
   );
+  // حفظ آخر ملف لكل مستخدم
+  await pool.query("ALTER TABLE html_files ADD COLUMN IF NOT EXISTS drive_link TEXT").catch(()=>{});
 
   await pool.query(
     "CREATE TABLE IF NOT EXISTS owner_profile (" +
@@ -669,6 +671,24 @@ async function createGoogleForm(title, questions) {
   } catch(e) { console.error('createForm:', e.message); return null; }
 }
 
+async function getLastFile(owner) {
+  try {
+    const r = await pool.query(
+      'SELECT * FROM html_files WHERE owner=$1 ORDER BY created_at DESC LIMIT 1', [owner]
+    );
+    if (!r.rows.length) return null;
+    const row = r.rows[0];
+    const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+    return {
+      title: row.title,
+      link: row.drive_link || (baseUrl + '/f/' + row.id),
+      request: row.title,
+      type: 'html',
+      fileId: row.id
+    };
+  } catch(e) { return null; }
+}
+
 async function buildHtmlFile(request, profile) {
   const isTable  = request.match(/جدول|اكسل|sheet|بيانات|متابعة|أعمدة|عمود/i);
   const isSurvey = request.match(/استبيان|نموذج|فورم|form/i);
@@ -694,26 +714,19 @@ async function buildCsvHtml(request, profile) {
     'عبدالعزيز يطلب جدول: "' + request + '"\n\n' +
     (profile ? 'معلومات عنه:\n' + profile + '\n\n' : '') +
     'ابن صفحة HTML كاملة مع جدول بيانات.\n\n' +
-    'قواعد:\n' +
+    'قواعد صارمة:\n' +
     '- HTML كامل مع CSS مدمج، RTL، خط Cairo من Google Fonts\n' +
+    '- العنوان الرئيسي: فقط اسم الجدول المطلوب بالضبط — لا تضيف أي وصف أو عنوان فرعي\n' +
     '- جدول <table id="mainTable"> منسق احترافي\n' +
     '- ألوان: header أزرق داكن #1a3c5e نص أبيض، صفوف متناوبة\n' +
-    '- زران في الأعلى:\n' +
-    '  1. "📊 افتح في Google Sheets" أخضر\n' +
+    '- زران في الأعلى فقط:\n' +
+    '  1. "📊 افتح في Google Sheets" أخضر onclick="openSheets()"\n' +
     '  2. "🖨️ طباعة" رمادي onclick="window.print()"\n' +
     '- JavaScript للزر الأخضر:\n' +
-    'function openSheets(){\n' +
-    '  const t=document.getElementById("mainTable");\n' +
-    '  if(!t){window.open("https://sheets.new");return;}\n' +
-    '  let c="\\uFEFF";\n' +
-    '  for(const r of t.rows){c+=Array.from(r.cells).map(x=>\'"\'+x.innerText.replace(/"/g,\'\'\'\')+\'"\').join(",")+\"\\n\";}\n' +
-    '  const b=new Blob([c],{type:"text/csv;charset=utf-8"});\n' +
-    '  const u=URL.createObjectURL(b);\n' +
-    '  const a=document.createElement("a");a.href=u;a.download="data.csv";document.body.appendChild(a);a.click();\n' +
-    '  setTimeout(()=>{window.open("https://sheets.new","_blank");},800);\n' +
-    '}\n' +
-    '- تاريخ اليوم في الأسفل\n' +
-    '- HTML فقط بدون أي نص خارجه';
+    'function openSheets(){const t=document.getElementById("mainTable");if(!t){window.open("https://sheets.new");return;}let c="\\uFEFF";for(const r of t.rows){c+=Array.from(r.cells).map(x=>\'"\'+x.innerText.replace(/"/g,"")+\'"\').join(",")+\"\\n\";}const b=new Blob([c],{type:"text/csv;charset=utf-8"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="data.csv";document.body.appendChild(a);a.click();setTimeout(()=>{window.open("https://sheets.new","_blank");},800);}\n' +
+    '- تاريخ اليوم في الأسفل فقط\n' +
+    '- لا تضيف أي نص إضافي أو وصف خارج الجدول\n' +
+    '- أعد HTML فقط بدون أي نص خارجه وبدون ```';
   return callAI('claude-sonnet-4-20250514', 4000, prompt);
 }
 
@@ -722,15 +735,18 @@ async function buildDocHtml(request, profile) {
     'عبدالعزيز يطلب: "' + request + '"\n\n' +
     (profile ? 'معلومات عنه:\n' + profile + '\n\n' : '') +
     'ابن صفحة HTML تشبه مستند Word احترافي.\n\n' +
-    'قواعد:\n' +
+    'قواعد صارمة:\n' +
     '- HTML كامل مع CSS مدمج، RTL، خط Cairo\n' +
+    '- العنوان الرئيسي: فقط ما طلبه عبدالعزيز بالضبط — لا تضيف عنواناً من عندك\n' +
     '- تصميم ورقة A4 بيضاء مع هوامش (max-width: 800px، padding: 40px)\n' +
     '- عناوين وأقسام واضحة ومنظمة\n' +
-    '- زر "📝 افتح في Google Docs" أزرق في الأعلى:\n' +
-    'function exportDoc(){const html=document.documentElement.outerHTML;const b=new Blob([html],{type:"text/html"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="مستند.html";a.click();setTimeout(()=>window.open("https://docs.new"),1500);}\n' +
-    '- زر "🖨️ طباعة / PDF" رمادي\n' +
-    '- تاريخ اليوم في الأسفل\n' +
-    '- HTML فقط بدون أي نص خارجه';
+    '- زران في الأعلى فقط:\n' +
+    '  1. "📝 افتح في Google Docs" أزرق onclick="exportDoc()"\n' +
+    '  2. "🖨️ طباعة / PDF" رمادي onclick="window.print()"\n' +
+    '- function exportDoc(){const b=new Blob([document.documentElement.outerHTML],{type:"text/html"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="doc.html";a.click();setTimeout(()=>window.open("https://docs.new"),1500);}\n' +
+    '- تاريخ اليوم في الأسفل فقط\n' +
+    '- لا تضيف أي نص زائد أو مقدمة\n' +
+    '- أعد HTML فقط بدون أي نص خارجه وبدون ```';
   return callAI('claude-sonnet-4-20250514', 4000, prompt);
 }
 
@@ -1748,10 +1764,13 @@ async function handleOwner(from, msg) {
         if (driveType) driveLink = await saveFileToDrive(request, htmlContent, driveType);
 
         if (driveLink) {
-          // نجح الحفظ في Drive
+          // احفظ في DB مع الرابط
+          const fileId = 'f' + Date.now();
+          await pool.query('INSERT INTO html_files (id,owner,title,content,drive_link) VALUES ($1,$2,$3,$4,$5)',
+            [fileId, from, request, htmlContent, driveLink]).catch(()=>{});
           userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link: driveLink, request, type: driveType } });
           const icon = isTable ? '📊' : '📝';
-          await sendWA(from, icon + ' جاهز في Google Drive!\n\n' + request + '\n\n🔗 ' + driveLink + '\n\nيفتح مباشرة في ' + (isTable ? 'Google Sheets' : 'Google Docs') + ' ✨\nلو تبي تعدّل قولي');
+          await sendWA(from, icon + ' جاهز في Google Drive!\n\n' + request + '\n\n🔗 ' + driveLink + '\n\nيفتح مباشرة في ' + (isTable ? 'Google Sheets' : 'Google Docs') + ' ✨\nلو تبي تعدّل قولي أو قل "حوّله PDF"');
         } else {
           // احفظ في DB كـ fallback
           const fileId = 'f' + Date.now();
@@ -1776,7 +1795,10 @@ async function handleOwner(from, msg) {
     }
 
     case 'export_pdf': {
-      const st = userState[from] || {};
+      let st = userState[from] || {};
+      if (!st.lastGeneratedFile) {
+        st.lastGeneratedFile = await getLastFile(from);
+      }
       if (!st.lastGeneratedFile) { await sendWA(from, '❓ ما عندي ملف أحوّله، سوّ ملف أولاً'); break; }
       await sendWA(from, '⏳ أحوّل الملف PDF...');
       try {
@@ -1795,7 +1817,10 @@ async function handleOwner(from, msg) {
     }
 
     case 'edit_file': {
-      const st2 = userState[from] || {};
+      let st2 = userState[from] || {};
+      if (!st2.lastGeneratedFile) {
+        st2.lastGeneratedFile = await getLastFile(from);
+      }
       if (!st2.lastGeneratedFile) { await sendWA(from, 'ما عندي ملف سابق أعدّل عليه'); break; }
       const editReq = analysis.task_title || msg;
       await sendWA(from, '⏳ أعدّل...');
@@ -2679,7 +2704,11 @@ app.get('/oauth/login', async function(req,res) {
   const client = await getOAuthClient();
   const url = client.generateAuthUrl({
     access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/drive.file'],
+    scope: [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/spreadsheets',
+      'https://www.googleapis.com/auth/documents'
+    ],
     prompt: 'consent'
   });
   res.redirect(url);
@@ -2707,23 +2736,35 @@ async function saveFileToDrive(title, htmlContent, type) {
     const { google } = require('googleapis');
     const client = await getOAuthClient();
     client.setCredentials(token);
-    // تحديث الـ token لو انتهى
     client.on('tokens', async function(newTokens) {
-      if (newTokens.refresh_token) token.refresh_token = newTokens.refresh_token;
       await saveOAuthToken(Object.assign({}, token, newTokens));
     });
     const drive = google.drive({ version: 'v3', auth: client });
-    const mimeType = type === 'sheet'
+
+    // نوع MIME المستهدف
+    const targetMime = type === 'sheet'
       ? 'application/vnd.google-apps.spreadsheet'
-      : type === 'doc'
-      ? 'application/vnd.google-apps.document'
-      : 'text/html';
+      : 'application/vnd.google-apps.document';
+
+    // أنشئ الملف مع تحويل تلقائي من HTML
     const file = await drive.files.create({
-      requestBody: { name: title, mimeType, parents: [DRIVE_FOLDER_ID] },
-      media: { mimeType: 'text/html', body: htmlContent },
+      requestBody: {
+        name: title,
+        mimeType: targetMime,
+        parents: [DRIVE_FOLDER_ID]
+      },
+      media: {
+        mimeType: 'text/html',
+        body: htmlContent
+      },
       fields: 'id,webViewLink'
     });
-    return file.data.webViewLink || ('https://drive.google.com/file/d/' + file.data.id);
+
+    const fileId = file.data.id;
+    const link = type === 'sheet'
+      ? 'https://docs.google.com/spreadsheets/d/' + fileId
+      : 'https://docs.google.com/document/d/' + fileId;
+    return link;
   } catch(e) {
     console.error('saveFileToDrive:', e.message);
     return null;
