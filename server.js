@@ -982,14 +982,19 @@ app.post('/webhook', async function(req, res) {
         quotedText = qm.conversation || (qm.extendedTextMessage && qm.extendedTextMessage.text) || null;
       }
     } else if (md.imageMessageData) {
-      fileUrl  = md.imageMessageData.downloadUrl || md.imageMessageData.jpegThumbnail;
+      fileUrl  = md.imageMessageData.downloadUrl || md.imageMessageData.jpegThumbnail || null;
       fileType = 'jpeg';
       msg      = md.imageMessageData.caption || '';
+      // لو ما في رابط تحميل، استخدم الـ thumbnail كصورة
+      if (!fileUrl && md.imageMessageData.jpegThumbnail) {
+        fileUrl = 'data:image/jpeg;base64,' + md.imageMessageData.jpegThumbnail;
+      }
     } else if (md.documentMessageData) {
       fileUrl  = md.documentMessageData.downloadUrl;
       const fn = md.documentMessageData.fileName || '';
       fileType = fn.toLowerCase().endsWith('.pdf') ? 'pdf' : 'doc';
-      msg      = md.documentMessageData.caption || fn || '';
+      // caption فقط لو كتب المستخدم نص — اسم الملف مو caption
+      msg      = md.documentMessageData.caption || '';
     } else if (md.quotedMessage) {
       msg = md.quotedMessage.textMessage || '';
     } else if (md.conversation) {
@@ -1022,17 +1027,22 @@ app.post('/webhook', async function(req, res) {
   if (fileUrl && from === PHONE) {
     // لو فيه caption مع الملف — اقرأ مباشرة
     if (msg && msg.trim()) {
-      // احفظ الملف أيضاً للأسئلة اللاحقة
       userState[from] = Object.assign(userState[from]||{}, {
         lastFile: { url: fileUrl, type: fileType }
       });
       await handleOwnerFile(from, fileUrl, fileType, msg);
-    } else {
-      // احفظ الملف وانتظر السؤال
+    } else if (fileType === 'pdf') {
+      // PDF بدون سؤال — احفظه وانتظر السؤال
       userState[from] = Object.assign(userState[from]||{}, {
         lastFile: { url: fileUrl, type: fileType }
       });
-      await sendWA(from, '📎 وصلني الملف — وش تبي أعرف منه؟');
+      await sendWA(from, '📎 وصلني الـ PDF — وش تبي أعرف منه؟');
+    } else {
+      // صورة بدون caption — صفها مباشرة
+      userState[from] = Object.assign(userState[from]||{}, {
+        lastFile: { url: fileUrl, type: fileType }
+      });
+      await handleOwnerFile(from, fileUrl, fileType, '');
     }
     return;
   }
@@ -1074,18 +1084,55 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
     return;
   }
 
-  await sendWA(from, '⏳ أقرأ...');
+  if (caption && caption.trim()) await sendWA(from, '⏳ أقرأ...');
+  else if (fileType !== 'pdf') await sendWA(from, '⏳ أشوف...');
+  else await sendWA(from, '⏳ أقرأ الـ PDF...');
 
   try {
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 15000 });
-    const base64   = Buffer.from(response.data).toString('base64');
-    const question = caption && caption.trim() ? caption.trim() : 'اقرأ هذا الملف واستخرج أهم المعلومات منه';
+    let base64;
+
+    // لو data URL (thumbnail مباشر)
+    if (fileUrl && fileUrl.startsWith('data:')) {
+      base64 = fileUrl.split(',')[1];
+    } else {
+      // تحميل من رابط — نجرب بـ Authorization أولاً ثم بدونه
+      let responseData;
+      try {
+        const r = await axios.get(fileUrl, {
+          responseType: 'arraybuffer', timeout: 20000,
+          headers: { 'Authorization': 'Bearer ' + GA_TOKEN }
+        });
+        responseData = r.data;
+      } catch(e1) {
+        try {
+          const r = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
+          responseData = r.data;
+        } catch(e2) {
+          console.error('File download failed:', e2.message);
+          await sendWA(from, '❌ ما قدرت أحمل الملف. جرب تعيد إرساله');
+          return;
+        }
+      }
+      base64 = Buffer.from(responseData).toString('base64');
+    }
+
+    // لو الـ PDF كبير جداً
+    if (fileType === 'pdf' && base64.length > 5500000) {
+      await sendWA(from, '⚠️ الملف كبير جداً، جرب نسخة أصغر (أقل من 4MB)');
+      return;
+    }
+
+    const question = caption && caption.trim()
+      ? caption.trim()
+      : (fileType === 'pdf'
+          ? 'اقرأ هذا الملف واستخرج أهم المعلومات منه — خاصة تاريخ الانتهاء أو أي تواريخ مهمة'
+          : 'صف ما في هذه الصورة بالتفصيل');
 
     let content;
     if (fileType === 'pdf') {
       content = [
         { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-        { type: 'text', text: question + '\n\nأجب بعامية نجدية مختصرة ومفيدة. لو فيه تاريخ انتهاء ذكره بوضوح.' }
+        { type: 'text', text: question + '\n\nأجب بعامية نجدية مختصرة ومفيدة. لو فيه تاريخ انتهاء ذكره بوضوح بصيغة YYYY-MM-DD.' }
       ];
     } else {
       const mediaType = fileType === 'png' ? 'image/png' : 'image/jpeg';
@@ -1096,7 +1143,7 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
     }
 
     const res = await axios.post('https://api.anthropic.com/v1/messages', {
-      model: 'claude-sonnet-4-20250514', max_tokens: 600,
+      model: 'claude-sonnet-4-20250514', max_tokens: 800,
       messages: [{ role: 'user', content }]
     }, { headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
 
@@ -1517,26 +1564,36 @@ async function handleOwner(from, msg) {
     case 'create_file': {
       const request = analysis.task_title || msg;
       await sendWA(from, '⏳ أبني الملف...');
-      const profile = await getProfile();
-      const fileData = await buildGoogleFile(request, profile);
-      if (!fileData) { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); break; }
-      let link = null;
-      let icon = '📄';
-      if (fileData.type === 'sheet') {
-        icon = '📊';
-        link = await createGoogleSheet(fileData.title || request, fileData.data || []);
-      } else if (fileData.type === 'form') {
-        icon = '📋';
-        link = await createGoogleForm(fileData.title || request, fileData.questions || []);
-      } else {
-        icon = '📝';
-        link = await createGoogleDoc(fileData.title || request, fileData.content || '');
+      try {
+        const profile = await getProfile();
+        const fileData = await buildGoogleFile(request, profile);
+        if (!fileData) { await sendWA(from, '❌ ما قدرت أفهم شكل الملف، وضّح أكثر'); break; }
+        console.log('📄 buildGoogleFile result:', JSON.stringify(fileData).substring(0,200));
+        let link = null;
+        let icon = '📄';
+        if (fileData.type === 'sheet') {
+          icon = '📊';
+          link = await createGoogleSheet(fileData.title || request, fileData.data || []);
+        } else if (fileData.type === 'form') {
+          icon = '📋';
+          link = await createGoogleForm(fileData.title || request, fileData.questions || []);
+        } else {
+          icon = '📝';
+          link = await createGoogleDoc(fileData.title || request, fileData.content || '');
+        }
+        if (!link) {
+          console.error('❌ Google file creation returned null for type:', fileData.type);
+          await sendWA(from, '❌ صار خطأ في Google Drive. تأكد إن الـ GOOGLE_CREDENTIALS صحيح في Railway');
+          break;
+        }
+        await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
+          [from, fileData.title||request, fileData.type, link]).catch(()=>{});
+        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: fileData.title, link, request, type: fileData.type } });
+        await sendWA(from, icon + ' جاهز!\n\n' + (fileData.title||request) + '\n\n🔗 ' + link + '\n\nيفتح مباشرة في المتصفح 😊\nلو تبي تعدّل قولي');
+      } catch(e) {
+        console.error('create_file error:', e.message);
+        await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,100));
       }
-      if (!link) { await sendWA(from, 'صار خطأ في إنشاء الملف، جرب مرة ثانية'); break; }
-      await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
-        [from, fileData.title||request, fileData.type, link]).catch(()=>{});
-      userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: fileData.title, link, request, type: fileData.type } });
-      await sendWA(from, icon + ' جاهز!\n\n' + (fileData.title||request) + '\n\n🔗 ' + link + '\n\nيفتح مباشرة في المتصفح 😊\nلو تبي تعدّل قولي');
       break;
     }
 
@@ -1892,6 +1949,24 @@ async function handleOwnerState(from, msg, state) {
     await pool.query('UPDATE tasks SET ' + field + '=$1 WHERE id=$2',[nv,t.id]);
     await sendWA(from, '✅ تم التعديل!');
     userState[from] = { step: 'idle' }; return;
+  }
+
+  if (state.step === 'waiting_file_details') {
+    const fullRequest = (state.partialRequest || '') + ' — ' + msg;
+    await sendWA(from, '⏳ أبني الملف...');
+    const profile = await getProfile();
+    const fileData = await buildGoogleFile(fullRequest, profile);
+    if (!fileData) { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); userState[from] = { step: 'idle' }; return; }
+    let link = null; let icon = '📄';
+    if (fileData.type === 'sheet') { icon = '📊'; link = await createGoogleSheet(fileData.title||fullRequest, fileData.data||[]); }
+    else if (fileData.type === 'form') { icon = '📋'; link = await createGoogleForm(fileData.title||fullRequest, fileData.questions||[]); }
+    else { icon = '📝'; link = await createGoogleDoc(fileData.title||fullRequest, fileData.content||''); }
+    if (!link) { await sendWA(from, 'صار خطأ في إنشاء الملف، جرب مرة ثانية'); userState[from] = { step: 'idle' }; return; }
+    await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
+      [from, fileData.title||fullRequest, fileData.type, link]).catch(()=>{});
+    userState[from] = { step: 'idle', lastGeneratedFile: { title: fileData.title, link, request: fullRequest, type: fileData.type } };
+    await sendWA(from, icon + ' جاهز!\n\n' + (fileData.title||fullRequest) + '\n\n🔗 ' + link + '\n\nيفتح مباشرة في المتصفح 😊\nلو تبي تعدّل قولي');
+    return;
   }
 
   userState[from] = { step: 'idle' };
