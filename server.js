@@ -658,13 +658,23 @@ async function buildCsvHtml(request, profile) {
     (profile ? 'معلومات عنه:\n' + profile + '\n\n' : '') +
     'ابن صفحة HTML كاملة مع جدول بيانات.\n\n' +
     'قواعد:\n' +
-    '- HTML كامل مع CSS مدمج، RTL، خط Cairo\n' +
+    '- HTML كامل مع CSS مدمج، RTL، خط Cairo من Google Fonts\n' +
     '- جدول <table id="mainTable"> منسق احترافي\n' +
-    '- ألوان: header أزرق داكن #1a3c5e، صفوف متناوبة\n' +
-    '- زر "📊 افتح في Google Sheets" أخضر في الأعلى\n' +
-    '- زر "🖨️ طباعة" رمادي\n' +
-    '- JavaScript للتصدير:\n' +
-    'function exportCSV(){const t=document.getElementById("mainTable");let c="\\uFEFF";for(const r of t.rows){c+=Array.from(r.cells).map(x=>\'"\'+x.innerText+\'"\').join(",")+\"\\n\";}const b=new Blob([c],{type:"text/csv;charset=utf-8"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="جدول.csv";a.click();setTimeout(()=>window.open("https://sheets.new"),1500);}\n' +
+    '- ألوان: header أزرق داكن #1a3c5e نص أبيض، صفوف متناوبة\n' +
+    '- زران في الأعلى:\n' +
+    '  1. "📊 افتح في Google Sheets" أخضر\n' +
+    '  2. "🖨️ طباعة" رمادي onclick="window.print()"\n' +
+    '- JavaScript للزر الأخضر:\n' +
+    'function openSheets(){\n' +
+    '  const t=document.getElementById("mainTable");\n' +
+    '  if(!t){window.open("https://sheets.new");return;}\n' +
+    '  let c="\\uFEFF";\n' +
+    '  for(const r of t.rows){c+=Array.from(r.cells).map(x=>\'"\'+x.innerText.replace(/"/g,\'\'\'\')+\'"\').join(",")+\"\\n\";}\n' +
+    '  const b=new Blob([c],{type:"text/csv;charset=utf-8"});\n' +
+    '  const u=URL.createObjectURL(b);\n' +
+    '  const a=document.createElement("a");a.href=u;a.download="data.csv";document.body.appendChild(a);a.click();\n' +
+    '  setTimeout(()=>{window.open("https://sheets.new","_blank");},800);\n' +
+    '}\n' +
     '- تاريخ اليوم في الأسفل\n' +
     '- HTML فقط بدون أي نص خارجه';
   return callAI('claude-sonnet-4-20250514', 4000, prompt);
@@ -1057,9 +1067,16 @@ app.post('/webhook', async function(req, res) {
   res.sendStatus(200);
   const body = req.body;
   if (body && body.typeWebhook !== 'incomingMessageReceived') return;
-  if (body && body.typeWebhook === 'incomingMessageReceived') {
-    console.log('📦 FULL WEBHOOK:', JSON.stringify(body, null, 2).substring(0, 2000));
+
+  // لوق مفصل للـ messageData فقط
+  if (body && body.messageData) {
+    const md2 = body.messageData;
+    console.log('📦 MSG TYPE:', md2.typeMessage, '| KEYS:', Object.keys(md2).join(','));
+    if (md2.typeMessage === 'imageMessage' || md2.typeMessage === 'audioMessage' || md2.typeMessage === 'voiceMessage') {
+      console.log('📦 MEDIA DATA:', JSON.stringify(md2).substring(0, 1000));
+    }
   }
+
   let msg      = null;
   let fileUrl  = null;
   let fileType = null;
@@ -1067,43 +1084,37 @@ app.post('/webhook', async function(req, res) {
   const md = body && body.messageData;
 
   if (md) {
-    if (md.textMessageData && md.textMessageData.textMessage) {
-      msg = md.textMessageData.textMessage.trim();
-    } else if (md.extendedTextMessageData) {
-      msg = (md.extendedTextMessageData.text || '').trim();
-      const ctx = md.extendedTextMessageData.contextInfo || null;
+    const typeMsg = md.typeMessage || '';
+
+    if (typeMsg === 'textMessage' || (md.textMessageData && md.textMessageData.textMessage)) {
+      msg = (md.textMessageData && md.textMessageData.textMessage) ? md.textMessageData.textMessage.trim() : '';
+    } else if (typeMsg === 'extendedTextMessage' || md.extendedTextMessageData) {
+      msg = (md.extendedTextMessageData && md.extendedTextMessageData.text || '').trim();
+      const ctx = md.extendedTextMessageData && md.extendedTextMessageData.contextInfo || null;
       if (ctx && ctx.quotedMessage) {
         const qm = ctx.quotedMessage;
         quotedText = qm.conversation || (qm.extendedTextMessage && qm.extendedTextMessage.text) || null;
       }
-    } else if (md.imageMessageData) {
-      console.log('🖼️ IMAGE DATA:', JSON.stringify({
-        downloadUrl: md.imageMessageData.downloadUrl,
-        hasJpegThumbnail: !!md.imageMessageData.jpegThumbnail,
-        jpegThumbnailLength: md.imageMessageData.jpegThumbnail ? md.imageMessageData.jpegThumbnail.length : 0,
-        caption: md.imageMessageData.caption,
-        keys: Object.keys(md.imageMessageData)
-      }));
-      // جرب downloadUrl أولاً، وإلا استخدم jpegThumbnail كـ base64
-      fileUrl  = md.imageMessageData.downloadUrl || null;
+    } else if (typeMsg === 'imageMessage' || md.imageMessageData) {
+      const imgData = md.imageMessageData || {};
+      fileUrl  = imgData.downloadUrl || null;
       fileType = 'jpeg';
-      msg      = md.imageMessageData.caption || '';
-      if (!fileUrl && md.imageMessageData.jpegThumbnail) {
-        fileUrl = 'data:image/jpeg;base64,' + md.imageMessageData.jpegThumbnail;
+      msg      = imgData.caption || '';
+      if (!fileUrl && imgData.jpegThumbnail) {
+        fileUrl = 'data:image/jpeg;base64,' + imgData.jpegThumbnail;
       }
-    } else if (md.audioMessageData || md.voiceMessageData) {
-      // رسالة صوتية — نرد بشكل مناسب
-      const audioData = md.audioMessageData || md.voiceMessageData;
-      console.log('🎤 AUDIO:', JSON.stringify({ url: audioData.downloadUrl, keys: Object.keys(audioData) }));
+      console.log('🖼️ IMAGE URL:', fileUrl ? fileUrl.substring(0,80) : 'NULL', '| caption:', msg);
+    } else if (typeMsg === 'audioMessage' || typeMsg === 'voiceMessage' || md.audioMessageData || md.voiceMessageData) {
+      const audioData = md.audioMessageData || md.voiceMessageData || {};
+      console.log('🎤 AUDIO URL:', audioData.downloadUrl);
       msg = '__audio__';
-      fileUrl = audioData.downloadUrl || null;
       fileType = 'audio';
-    } else if (md.documentMessageData) {
-      fileUrl  = md.documentMessageData.downloadUrl;
-      const fn = md.documentMessageData.fileName || '';
+    } else if (typeMsg === 'documentMessage' || md.documentMessageData) {
+      const docData = md.documentMessageData || {};
+      fileUrl  = docData.downloadUrl;
+      const fn = docData.fileName || '';
       fileType = fn.toLowerCase().endsWith('.pdf') ? 'pdf' : 'doc';
-      // caption فقط لو كتب المستخدم نص — اسم الملف مو caption
-      msg      = md.documentMessageData.caption || '';
+      msg      = docData.caption || '';
     } else if (md.quotedMessage) {
       msg = md.quotedMessage.textMessage || '';
     } else if (md.conversation) {
@@ -1688,12 +1699,37 @@ async function handleOwner(from, msg) {
         const profile = await getProfile();
         const htmlContent = await buildHtmlFile(request, profile);
         if (!htmlContent) { await sendWA(from, '❌ ما قدرت أبني الملف، وضّح أكثر'); break; }
-        const fileId = 'f' + Date.now();
-        await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, request, htmlContent]);
-        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
-        const link = baseUrl + '/f/' + fileId;
-        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link, request, type: 'html', fileId } });
-        await sendWA(from, '📄 جاهز!\n\n' + request + '\n\n🔗 ' + link + '\n\nافتحه في المتصفح ✨\nلو تبي تعدّل قولي');
+
+        // تحقق من نوع الملف
+        const isTable  = request.match(/جدول|اكسل|بيانات|متابعة/i);
+        const isSurvey = request.match(/استبيان|نموذج|فورم/i);
+        const driveType = isTable ? 'sheet' : isSurvey ? null : 'doc';
+
+        // جرب الحفظ في Drive أولاً
+        let driveLink = null;
+        if (driveType) driveLink = await saveFileToDrive(request, htmlContent, driveType);
+
+        if (driveLink) {
+          // نجح الحفظ في Drive
+          userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link: driveLink, request, type: driveType } });
+          const icon = isTable ? '📊' : '📝';
+          await sendWA(from, icon + ' جاهز في Google Drive!\n\n' + request + '\n\n🔗 ' + driveLink + '\n\nيفتح مباشرة في ' + (isTable ? 'Google Sheets' : 'Google Docs') + ' ✨\nلو تبي تعدّل قولي');
+        } else {
+          // احفظ في DB كـ fallback
+          const fileId = 'f' + Date.now();
+          await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, request, htmlContent]);
+          const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+          const link = baseUrl + '/f/' + fileId;
+          userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: request, link, request, type: 'html', fileId } });
+
+          // لو ما في token — أرسل رابط تسجيل الدخول مرة وحدة
+          const token = await getOAuthToken();
+          if (!token) {
+            await sendWA(from, '📄 جاهز!\n\n🔗 ' + link + '\n\n⚠️ لربط Google Drive مباشرة افتح هذا الرابط مرة وحدة:\nhttps://mahami-production.up.railway.app/oauth/login\n\nلو تبي تعدّل قولي');
+          } else {
+            await sendWA(from, '📄 جاهز!\n\n🔗 ' + link + '\n\nافتحه في المتصفح ✨\nلو تبي تعدّل قولي');
+          }
+        }
       } catch(e) {
         console.error('create_file error:', e.message);
         await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,100));
@@ -2559,6 +2595,83 @@ app.get('/f/:id', async function(req,res) {
     res.send(r.rows[0].content);
   } catch(e) { res.status(500).send('خطأ'); }
 });
+
+// ─── OAuth Google ─────────────────────────────────────────────────────────
+const OAUTH_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
+const OAUTH_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const OAUTH_REDIRECT      = 'https://mahami-production.up.railway.app/oauth/callback';
+
+async function getOAuthClient() {
+  const { google } = require('googleapis');
+  return new google.auth.OAuth2(OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_REDIRECT);
+}
+
+async function getOAuthToken() {
+  try {
+    const r = await pool.query("SELECT value FROM settings WHERE key='oauth_token'");
+    return r.rows[0] ? JSON.parse(r.rows[0].value) : null;
+  } catch(e) { return null; }
+}
+
+async function saveOAuthToken(token) {
+  await pool.query("INSERT INTO settings (key,value) VALUES ('oauth_token',$1) ON CONFLICT (key) DO UPDATE SET value=$1", [JSON.stringify(token)]);
+}
+
+// رابط تسجيل الدخول
+app.get('/oauth/login', async function(req,res) {
+  const client = await getOAuthClient();
+  const url = client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/drive.file'],
+    prompt: 'consent'
+  });
+  res.redirect(url);
+});
+
+// Callback بعد تسجيل الدخول
+app.get('/oauth/callback', async function(req,res) {
+  try {
+    const client = await getOAuthClient();
+    const { tokens } = await client.getToken(req.query.code);
+    await saveOAuthToken(tokens);
+    res.send('<html><body dir="rtl" style="font-family:sans-serif;text-align:center;padding:50px"><h2>✅ تم ربط Google Drive بنجاح!</h2><p>الآن كل ملف سيُحفظ مباشرة في Drive عبدالعزيز</p></body></html>');
+    await sendWA(PHONE, '✅ تم ربط Google Drive! الآن الملفات تُحفظ مباشرة في Drive.');
+  } catch(e) {
+    console.error('OAuth callback error:', e.message);
+    res.send('خطأ في تسجيل الدخول: ' + e.message);
+  }
+});
+
+// حفظ ملف في Drive بحساب عبدالعزيز
+async function saveFileToDrive(title, htmlContent, type) {
+  try {
+    const token = await getOAuthToken();
+    if (!token) return null;
+    const { google } = require('googleapis');
+    const client = await getOAuthClient();
+    client.setCredentials(token);
+    // تحديث الـ token لو انتهى
+    client.on('tokens', async function(newTokens) {
+      if (newTokens.refresh_token) token.refresh_token = newTokens.refresh_token;
+      await saveOAuthToken(Object.assign({}, token, newTokens));
+    });
+    const drive = google.drive({ version: 'v3', auth: client });
+    const mimeType = type === 'sheet'
+      ? 'application/vnd.google-apps.spreadsheet'
+      : type === 'doc'
+      ? 'application/vnd.google-apps.document'
+      : 'text/html';
+    const file = await drive.files.create({
+      requestBody: { name: title, mimeType, parents: [DRIVE_FOLDER_ID] },
+      media: { mimeType: 'text/html', body: htmlContent },
+      fields: 'id,webViewLink'
+    });
+    return file.data.webViewLink || ('https://drive.google.com/file/d/' + file.data.id);
+  } catch(e) {
+    console.error('saveFileToDrive:', e.message);
+    return null;
+  }
+}
 
 app.get('/', function(req,res) {
   res.json({ status:'مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
