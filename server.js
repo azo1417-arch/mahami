@@ -2809,30 +2809,75 @@ async function saveFileToDrive(title, htmlContent, type) {
     });
     const drive = google.drive({ version: 'v3', auth: client });
 
-    // نوع MIME المستهدف
-    const targetMime = type === 'sheet'
-      ? 'application/vnd.google-apps.spreadsheet'
-      : 'application/vnd.google-apps.document';
+    let fileId;
 
-    // أنشئ الملف مع تحويل تلقائي من HTML
-    const file = await drive.files.create({
-      requestBody: {
-        name: title,
-        mimeType: targetMime,
-        parents: [DRIVE_FOLDER_ID]
-      },
-      media: {
-        mimeType: 'text/html',
-        body: htmlContent
-      },
-      fields: 'id,webViewLink'
-    });
+    if (type === 'sheet') {
+      // للجداول: استخدم Sheets API مباشرة
+      const sheets = google.sheets({ version: 'v4', auth: client });
 
-    const fileId = file.data.id;
-    const link = type === 'sheet'
-      ? 'https://docs.google.com/spreadsheets/d/' + fileId
-      : 'https://docs.google.com/document/d/' + fileId;
-    return link;
+      // استخرج البيانات من الـ HTML
+      const tableMatch = htmlContent.match(/<table[^>]*id="mainTable"[^>]*>([\s\S]*?)<\/table>/i);
+      let values = [];
+      if (tableMatch) {
+        const rows = tableMatch[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
+        values = rows.map(function(row) {
+          const cells = row.match(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi) || [];
+          return cells.map(function(cell) {
+            return cell.replace(/<[^>]+>/g, '').replace(/&nbsp;/g,' ').trim();
+          });
+        });
+      }
+
+      // أنشئ Spreadsheet
+      const ss = await sheets.spreadsheets.create({
+        requestBody: { properties: { title } }
+      });
+      fileId = ss.data.spreadsheetId;
+
+      // أضف البيانات
+      if (values.length > 0) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: fileId,
+          range: 'Sheet1!A1',
+          valueInputOption: 'RAW',
+          requestBody: { values }
+        });
+      }
+
+      // انقل للفولدر
+      try {
+        await drive.files.update({
+          fileId,
+          addParents: DRIVE_FOLDER_ID,
+          fields: 'id'
+        });
+      } catch(e2) { console.error('Move folder:', e2.message); }
+
+      console.log('✅ Sheet created:', fileId);
+      return 'https://docs.google.com/spreadsheets/d/' + fileId;
+
+    } else {
+      // للمستندات: رفع HTML
+      const file = await drive.files.create({
+        requestBody: { name: title, mimeType: 'application/vnd.google-apps.document' },
+        media: { mimeType: 'text/html', body: htmlContent },
+        fields: 'id,parents'
+      });
+      fileId = file.data.id;
+      console.log('✅ Doc created:', fileId);
+
+      try {
+        const prevParents = (file.data.parents || []).join(',');
+        await drive.files.update({
+          fileId,
+          addParents: DRIVE_FOLDER_ID,
+          removeParents: prevParents,
+          fields: 'id'
+        });
+      } catch(e2) { console.error('Move folder:', e2.message); }
+
+      return 'https://docs.google.com/document/d/' + fileId;
+    }
   } catch(e) {
     console.error('saveFileToDrive:', e.message);
     return null;
