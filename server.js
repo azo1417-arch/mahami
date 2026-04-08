@@ -12,6 +12,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
 app.get('/dashboard', (req,res) => res.sendFile(path.join(__dirname,'dashboard.html')));
+app.use("/files", require("express").static(require("path").join(__dirname, "generated")));
 
 // ─── Config ───────────────────────────────────────────────────────────────
 const PHONE       = '966563466639';
@@ -99,6 +100,23 @@ async function initDB() {
     "note TEXT DEFAULT '', " +
     "active BOOLEAN DEFAULT TRUE, " +
     "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS generated_files (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "owner TEXT NOT NULL, " +
+    "filename TEXT NOT NULL, " +
+    "filetype TEXT NOT NULL, " +
+    "filepath TEXT NOT NULL, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS owner_profile (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "key TEXT UNIQUE NOT NULL, " +
+    "value TEXT NOT NULL, " +
+    "updated_at TIMESTAMP DEFAULT NOW())"
   );
   console.log('✅ DB جاهزة');
 }
@@ -294,6 +312,10 @@ async function analyzeOwner(msg, context) {
     '- وش مواعيدي المتاحة = show_slots\n' +
     '- كل [يوم/أسبوع/أحد/اثنين] الساعة X = add_recurring (task_title=العنوان, note=الأيام والوقت)\n' +
     '- وش تذكيراتي المتكررة/المتكررة = show_recurring\n' +
+    '- وين/موقع/خريطة/المسافة/كم المسافة/اتجاهات = maps (task_title=الاستفسار)\n' +
+    '- سوّ/اعمل/ابن جدول أو ملف أو تقرير أو خطة = create_file (task_title=وصف الطلب)\n' +
+    '- عدّل/غيّر في الملف = edit_file (task_title=التعديل المطلوب)\n' +
+    '- وش تعرف عني/ملفي/معلوماتي = show_profile\n' +
     '- الجو/الطقس/حرارة/بارد/حار = weather (task_title = اسم المدينة لو ذكرت)\n' +
     '- سعر الدولار/العملات/الريال/صرف = currency\n' +
     '- سعر الذهب = gold\n' +
@@ -428,11 +450,181 @@ async function extractExpiryFromFile(fileUrl, fileType) {
 }
 
 
-// ─── ذاكرة المحادثة ───────────────────────────────────────────────────────
+// ─── الذاكرة الشخصية لعبدالعزيز ─────────────────────────────────────────
+async function saveProfile(key, value) {
+  try {
+    await pool.query('INSERT INTO owner_profile (key,value,updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (key) DO UPDATE SET value=$2,updated_at=NOW()',[key,value]);
+  } catch(e) {}
+}
+
+async function getProfile() {
+  try {
+    const r = await pool.query('SELECT key,value FROM owner_profile ORDER BY updated_at DESC');
+    if (!r.rows.length) return '';
+    return r.rows.map(function(row){ return row.key + ': ' + row.value; }).join('\n');
+  } catch(e) { return ''; }
+}
+
+async function updateProfileFromConversation(msg, response) {
+  // في الخلفية — نواف يستخرج معلومات عن عبدالعزيز من المحادثة
+  try {
+    const prompt =
+      'بناءً على هذه المحادثة، هل يمكن استخراج معلومات مفيدة عن عبدالعزيز؟\n' +
+      'عبدالعزيز: "' + msg + '"\n' +
+      'نواف: "' + response.substring(0,200) + '"\n\n' +
+      'أعد JSON فقط أو {} إذا ما في معلومات:\n' +
+      '{"key":"اسم المعلومة","value":"القيمة"}\n\n' +
+      'أمثلة مفيدة:\n' +
+      '- لو قال "اجتماعاتي دايماً الصبح" → {"key":"وقت_الاجتماعات","value":"الصبح"}\n' +
+      '- لو ذكر مشروع → {"key":"مشروع_حالي","value":"اسم المشروع"}\n' +
+      '- لو ذكر شخص مهم → {"key":"شخص_مهم","value":"الاسم والعلاقة"}\n' +
+      'إذا ما في معلومة مفيدة أعد {}';
+    const res = await callAIJson('claude-sonnet-4-20250514', 200, prompt);
+    if (res && res.key && res.value) await saveProfile(res.key, res.value);
+  } catch(e) {}
+}
+
+// ─── توليد الملفات ────────────────────────────────────────────────────────
+const fs   = require('fs');
+const pathM = require('path');
+
+async function generateFile(type, content, filename) {
+  try {
+    const dir = pathM.join(__dirname, 'generated');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const filepath = pathM.join(dir, filename);
+
+    if (type === 'csv' || type === 'excel') {
+      fs.writeFileSync(filepath, content, 'utf8');
+    } else if (type === 'html') {
+      fs.writeFileSync(filepath, content, 'utf8');
+    } else {
+      fs.writeFileSync(filepath, content, 'utf8');
+    }
+    return filepath;
+  } catch(e) { console.error('generateFile:', e.message); return null; }
+}
+
+async function buildFileFromRequest(request, profile) {
+  const prompt =
+    'عبدالعزيز يطلب: "' + request + '"\n\n' +
+    'معلومات عنه:\n' + (profile||'لا يوجد') + '\n\n' +
+    'أعد JSON فقط:\n' +
+    '{"type":"csv|html|txt","filename":"اسم_الملف.csv","title":"عنوان","content":"محتوى الملف كامل"}\n\n' +
+    'قواعد:\n' +
+    '- جداول Excel → type: csv (محتوى CSV صحيح)\n' +
+    '- تقارير/وثائق → type: html (HTML منسق جميل)\n' +
+    '- قوائم/نصوص → type: txt\n' +
+    '- الـ content يكون المحتوى الكامل جاهز للحفظ\n' +
+    '- للـ CSV: أول سطر headers، ثم البيانات\n' +
+    '- للـ HTML: صفحة كاملة مع CSS مدمج، RTL، خط عربي';
+  return callAIJson('claude-sonnet-4-20250514', 2000, prompt);
+}
+
+// ─── Google Drive / Sheets / Docs / Forms ────────────────────────────────
+let googleAuth = null;
+
+async function getGoogleAuth() {
+  if (googleAuth) return googleAuth;
+  try {
+    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS || '{}');
+    if (!creds.client_email) return null;
+    const { google } = require('googleapis');
+    const auth = new google.auth.GoogleAuth({
+      credentials: creds,
+      scopes: [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/documents',
+        'https://www.googleapis.com/auth/forms'
+      ]
+    });
+    googleAuth = await auth.getClient();
+    return googleAuth;
+  } catch(e) { console.error('Google Auth:', e.message); return null; }
+}
+
+async function createGoogleSheet(title, data) {
+  try {
+    const { google } = require('googleapis');
+    const auth   = await getGoogleAuth(); if (!auth) return null;
+    const sheets = google.sheets({ version: 'v4', auth });
+    const drive  = google.drive({ version: 'v3', auth });
+    const res    = await sheets.spreadsheets.create({
+      requestBody: { properties: { title }, sheets: [{ properties: { title: 'البيانات' } }] }
+    });
+    const sid = res.data.spreadsheetId;
+    if (data && data.length > 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sid, range: 'البيانات!A1',
+        valueInputOption: 'RAW', requestBody: { values: data }
+      });
+    }
+    await drive.permissions.create({ fileId: sid, requestBody: { role: 'reader', type: 'anyone' } });
+    return 'https://docs.google.com/spreadsheets/d/' + sid;
+  } catch(e) { console.error('createSheet:', e.message); return null; }
+}
+
+async function createGoogleDoc(title, content) {
+  try {
+    const { google } = require('googleapis');
+    const auth  = await getGoogleAuth(); if (!auth) return null;
+    const docs  = google.docs({ version: 'v1', auth });
+    const drive = google.drive({ version: 'v3', auth });
+    const res   = await docs.documents.create({ requestBody: { title } });
+    const did   = res.data.documentId;
+    if (content) {
+      await docs.documents.batchUpdate({
+        documentId: did,
+        requestBody: { requests: [{ insertText: { location: { index: 1 }, text: content } }] }
+      });
+    }
+    await drive.permissions.create({ fileId: did, requestBody: { role: 'reader', type: 'anyone' } });
+    return 'https://docs.google.com/document/d/' + did;
+  } catch(e) { console.error('createDoc:', e.message); return null; }
+}
+
+async function createGoogleForm(title, questions) {
+  try {
+    const { google } = require('googleapis');
+    const auth  = await getGoogleAuth(); if (!auth) return null;
+    const forms = google.forms({ version: 'v1', auth });
+    const drive = google.drive({ version: 'v3', auth });
+    const res   = await forms.forms.create({ requestBody: { info: { title, documentTitle: title } } });
+    const fid   = res.data.formId;
+    if (questions && questions.length > 0) {
+      await forms.forms.batchUpdate({
+        formId: fid,
+        requestBody: {
+          requests: questions.map(function(q, i) {
+            return { createItem: { item: { title: q.title||q, questionItem: { question: { required: false, textQuestion: { paragraph: false } } } }, location: { index: i } } };
+          })
+        }
+      });
+    }
+    await drive.permissions.create({ fileId: fid, requestBody: { role: 'reader', type: 'anyone' } });
+    return 'https://docs.google.com/forms/d/' + fid;
+  } catch(e) { console.error('createForm:', e.message); return null; }
+}
+
+async function buildGoogleFile(request, profile) {
+  const prompt =
+    'عبدالعزيز يطلب: "' + request + '"\n\n' +
+    (profile ? 'معلومات عنه:\n' + profile + '\n\n' : '') +
+    'أعد JSON فقط:\n' +
+    '{"type":"sheet|doc|form","title":"عنوان","data":[["عمود1"],["قيمة1"]],"content":"نص","questions":["سؤال1"]}\n\n' +
+    '- جداول/Excel/بيانات = sheet\n' +
+    '- وثائق/تقارير/خطط = doc\n' +
+    '- استبيانات/نماذج = form\n' +
+    '- data: مصفوفة ثنائية الأبعاد، أول صف headers\n' +
+    '- content: نص مفصل للمستند\n' +
+    '- questions: قائمة أسئلة النموذج';
+  return callAIJson('claude-sonnet-4-20250514', 2000, prompt);
+}
+
 async function saveConvMsg(phone, role, message) {
   try {
     await pool.query('INSERT INTO conversation_history (phone,role,message) VALUES ($1,$2,$3)',[phone,role,message]);
-    // احذف القديم — احتفظ بآخر 20 رسالة فقط
     await pool.query('DELETE FROM conversation_history WHERE phone=$1 AND id NOT IN (SELECT id FROM conversation_history WHERE phone=$1 ORDER BY created_at DESC LIMIT 20)',[phone,phone]);
   } catch(e) {}
 }
@@ -846,6 +1038,11 @@ app.post('/webhook', async function(req, res) {
   }
   if (from === PHONE)      { await handleOwner(from, msg);   return; }
   if (from === WIFE_PHONE) { await handleWife(from, msg);    return; }
+  // معالجة ملفات الزوار
+  if (fileUrl && from !== PHONE && from !== WIFE_PHONE) {
+    await handleVisitorFile(from, fileUrl, fileType, msg);
+    return;
+  }
   await handleVisitor(from, msg);
 });
 
@@ -923,6 +1120,82 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
   }
 }
 
+// ─── معالجة ملفات الزوار ──────────────────────────────────────────────────
+async function handleVisitorFile(from, fileUrl, fileType, caption) {
+  let visitor = null;
+  try { const r = await pool.query('SELECT * FROM visitors WHERE phone=$1',[from]); if (r.rows.length) visitor = r.rows[0]; } catch(e) {}
+  const visitorName = (visitor && visitor.name) || 'زائر';
+
+  if (!fileUrl || fileType === 'doc') return; // تجاهل أنواع غير مدعومة
+
+  try {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    const base64   = Buffer.from(response.data).toString('base64');
+    const question = caption && caption.trim() ? caption.trim() : null;
+
+    let content;
+    if (fileType === 'pdf') {
+      const q = question || 'استخرج أهم المعلومات من هذا الملف — خاصة أي تواريخ أو طلبات أو مواعيد';
+      content = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+        { type: 'text', text: q + '\n\nأجب بإيجاز. لو فيه تاريخ انتهاء أو موعد مهم حدده بوضوح بصيغة YYYY-MM-DD.' }
+      ];
+    } else {
+      const mediaType = fileType === 'png' ? 'image/png' : 'image/jpeg';
+      const q = question || 'صف ما في هذه الصورة. لو فيه تاريخ أو موعد أو طلب حدده';
+      content = [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+        { type: 'text', text: q + '\n\nأجب بإيجاز. لو فيه تاريخ انتهاء أو موعد مهم حدده بصيغة YYYY-MM-DD.' }
+      ];
+    }
+
+    const res = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514', max_tokens: 500,
+      messages: [{ role: 'user', content }]
+    }, { headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+
+    const answer = res.data.content[0].text.trim();
+
+    // تحقق لو فيه تاريخ أو طلب في المحتوى
+    const dateMatch = answer.match(/(\d{4}-\d{2}-\d{2})/);
+    const hasRequest = ['يطلب','موعد','اجتماع','تذكير','ينتهي','انتهاء'].some(function(w){ return answer.includes(w); });
+
+    if (dateMatch || hasRequest) {
+      // أبلغ عبدالعزيز بما في الملف
+      await sendWA(PHONE,
+        '📎 *ملف من ' + visitorName + '*\n\n' +
+        answer +
+        (dateMatch ? '\n\n📅 تاريخ مذكور: ' + dateMatch[1] : '')
+      );
+      // رد على الزائر بصمت
+      await sendWA(from, 'تمام، استلمت الملف وبوصله لعبدالعزيز ✅');
+    } else {
+      // أبلغ عبدالعزيز فقط
+      await sendWA(PHONE, '📎 *ملف من ' + visitorName + '*\n\n' + answer);
+      await sendWA(from, 'تمام، وصل الملف ✅');
+    }
+
+    // لو الزائر أرسل مع سؤال عن تذكير
+    if (question && (question.includes('ذكر') || question.includes('تذكير') || question.includes('قبل'))) {
+      if (dateMatch) {
+        // احسب تذكير قبل شهر
+        const expiry  = new Date(dateMatch[1]);
+        const remind  = new Date(expiry); remind.setMonth(remind.getMonth()-1);
+        const remindStr = remind.getFullYear() + '-' + String(remind.getMonth()+1).padStart(2,'0') + '-' + String(remind.getDate()).padStart(2,'0');
+        // أضف تذكير تلقائي
+        const id = Date.now();
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+          [id, 'تذكير وثيقة — ' + visitorName, 'reminder', remindStr, '09:00', answer.substring(0,100), from, visitorName, 'approved']
+        ).catch(()=>{});
+        await sendWA(PHONE, '🔔 تمت إضافة تذكير تلقائي بتاريخ ' + remindStr + ' لوثيقة ' + visitorName);
+      }
+    }
+
+  } catch(e) {
+    console.error('VisitorFile:', e.message);
+  }
+}
+
 // ─── Handle Owner ─────────────────────────────────────────────────────────
 async function handleOwner(from, msg) {
   const state = userState[from] || { step: 'idle' };
@@ -938,11 +1211,13 @@ async function handleOwner(from, msg) {
 
   let context = '';
   try {
-    const [pr, td, history] = await Promise.all([
+    const [pr, td, history, profile] = await Promise.all([
       pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 3"),
       pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time LIMIT 5',[todayStr()]),
-      getConvHistory(from, 8)
+      getConvHistory(from, 8),
+      getProfile()
     ]);
+    if (profile) context += 'معلومات عن عبدالعزيز:\n' + profile + '\n\n';
     if (pr.rows.length) {
       context += 'طلبات معلقة:\n';
       pr.rows.forEach(function(t) { context += '- ' + t.requested_by_name + ': "' + t.title + '" (' + t.type + ')' + (t.time?' '+fmt12(t.time):'') + '\n'; });
@@ -1239,6 +1514,76 @@ async function handleOwner(from, msg) {
       break;
     }
 
+    case 'create_file': {
+      const request = analysis.task_title || msg;
+      await sendWA(from, '⏳ أبني الملف...');
+      const profile = await getProfile();
+      const fileData = await buildGoogleFile(request, profile);
+      if (!fileData) { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); break; }
+      let link = null;
+      let icon = '📄';
+      if (fileData.type === 'sheet') {
+        icon = '📊';
+        link = await createGoogleSheet(fileData.title || request, fileData.data || []);
+      } else if (fileData.type === 'form') {
+        icon = '📋';
+        link = await createGoogleForm(fileData.title || request, fileData.questions || []);
+      } else {
+        icon = '📝';
+        link = await createGoogleDoc(fileData.title || request, fileData.content || '');
+      }
+      if (!link) { await sendWA(from, 'صار خطأ في إنشاء الملف، جرب مرة ثانية'); break; }
+      await pool.query('INSERT INTO generated_files (owner,filename,filetype,filepath) VALUES ($1,$2,$3,$4)',
+        [from, fileData.title||request, fileData.type, link]).catch(()=>{});
+      userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: fileData.title, link, request, type: fileData.type } });
+      await sendWA(from, icon + ' جاهز!\n\n' + (fileData.title||request) + '\n\n🔗 ' + link + '\n\nيفتح مباشرة في المتصفح 😊\nلو تبي تعدّل قولي');
+      break;
+    }
+
+    case 'edit_file': {
+      const st2 = userState[from] || {};
+      if (!st2.lastGeneratedFile) { await sendWA(from, 'ما عندي ملف سابق أعدّل عليه'); break; }
+      const editReq = analysis.task_title || msg;
+      await sendWA(from, '⏳ أعدّل...');
+      const prof2   = await getProfile();
+      const combined = st2.lastGeneratedFile.request + ' — تعديل: ' + editReq;
+      const fd2     = await buildGoogleFile(combined, prof2);
+      if (!fd2) { await sendWA(from, 'ما قدرت أعدّل، وضّح أكثر'); break; }
+      let link2 = null;
+      if (fd2.type === 'sheet') link2 = await createGoogleSheet(fd2.title||combined, fd2.data||[]);
+      else if (fd2.type === 'form') link2 = await createGoogleForm(fd2.title||combined, fd2.questions||[]);
+      else link2 = await createGoogleDoc(fd2.title||combined, fd2.content||'');
+      if (!link2) { await sendWA(from, 'صار خطأ في التعديل'); break; }
+      userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: Object.assign({}, st2.lastGeneratedFile, { request: combined, link: link2 }) });
+      await sendWA(from, '✅ تم التعديل!\n\n🔗 ' + link2);
+      break;
+    }
+
+    case 'maps': {
+      const query = analysis.task_title || msg;
+      // استخرج من/إلى لو ذكرهم
+      const fromTo = msg.match(/من\s+(.+?)\s+(?:إلى|الى|ل)\s+(.+)/);
+      if (fromTo) {
+        const origin = fromTo[1].trim();
+        const dest   = fromTo[2].trim();
+        const mapsLink = 'https://www.google.com/maps/dir/' + encodeURIComponent(origin) + '/' + encodeURIComponent(dest);
+        const info = await nawafOwnerReply('كم المسافة والوقت التقريبي من ' + origin + ' إلى ' + dest + '؟ أجب بجملة واحدة فقط بالأرقام', '');
+        await sendWA(from, '🗺️ ' + origin + ' ← ' + dest + '\n\n' + (info||'') + '\n\n🔗 ' + mapsLink);
+      } else {
+        const mapsLink = 'https://www.google.com/maps/search/' + encodeURIComponent(query);
+        const info = await nawafOwnerReply('وين يقع "' + query + '"؟ أجب بجملة واحدة', '');
+        await sendWA(from, '📍 ' + query + '\n\n' + (info||'') + '\n\n🔗 ' + mapsLink);
+      }
+      break;
+    }
+
+    case 'show_profile': {
+      const profile3 = await getProfile();
+      if (!profile3) { await sendWA(from, 'ما عندي معلومات عنك بعد، بتعلم منك مع الوقت'); break; }
+      await sendWA(from, '🧠 *اللي أعرفه عنك:*\n\n' + profile3);
+      break;
+    }
+
     case 'show_recurring': {
       const r = await pool.query("SELECT * FROM recurring_tasks WHERE active=true ORDER BY created_at DESC");
       if (!r.rows.length) { await sendWA(from, 'ما عندك تذكيرات متكررة'); break; }
@@ -1414,7 +1759,10 @@ async function handleOwner(from, msg) {
       const reply = await nawafOwnerReply(msg, context);
       if (reply) {
         await sendWA(from, reply);
-        setImmediate(function() { saveConvMsg(from, 'nawaf', reply.substring(0,200)); });
+        setImmediate(function() {
+          saveConvMsg(from, 'nawaf', reply.substring(0,200));
+          updateProfileFromConversation(msg, reply);
+        });
       }
       else { await sendWA(from, 'قلي وش تقصد بالضبط؟'); }
       break;
@@ -1859,6 +2207,47 @@ async function handleVisitor(from, msg) {
   if (analysis.intent === 'reminder_for_self') {
     userState[from] = { step: 'waiting_visitor_reminder_topic', history: state.history, visitorName };
     await sendWA(from, '🔔 وش تبيني أذكّرك فيه؟ 👇'); return;
+  }
+
+  // طلب بناء أو تعديل ملف من الزائر
+  const fileKeywords = ['اعمل لي','سوّ لي','سوي لي','ابن لي','جدول','ملف','اكسل','excel','pdf','تقرير','خطة','قائمة'];
+  const editKeywords = ['عدّل','غيّر','اضف','احذف','عدل في الملف','غير في الملف'];
+  const wantsFile = fileKeywords.some(function(w){ return msg.includes(w); });
+  const wantsEdit = editKeywords.some(function(w){ return msg.includes(w); });
+  const vState    = userState[from] || {};
+
+  if (wantsEdit && vState.lastVisitorFile) {
+    await sendWA(from, '⏳ أعدّل...');
+    const combined  = vState.lastVisitorFile.request + ' — تعديل: ' + msg;
+    const fileData  = await buildFileFromRequest(combined, '');
+    if (fileData && fileData.content) {
+      const fp = await generateFile(fileData.type, fileData.content, vState.lastVisitorFile.filename);
+      if (fp) {
+        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+        const link    = baseUrl + '/files/' + vState.lastVisitorFile.filename;
+        userState[from] = Object.assign({}, vState, { lastVisitorFile: Object.assign({}, vState.lastVisitorFile, { request: combined }) });
+        await sendWA(from, 'تم التعديل 😊\n\n🔗 ' + link);
+        await sendWA(PHONE, '📎 ' + visitorName + ' طلب تعديل ملف وأرسلته له');
+      } else { await sendWA(from, 'صار خطأ، جرب مرة ثانية'); }
+    } else { await sendWA(from, 'ما قدرت أعدّل، وضّح أكثر'); }
+    return;
+  }
+
+  if (wantsFile) {
+    await sendWA(from, '⏳ أبني لك الملف...');
+    const fileData = await buildFileFromRequest(msg, '');
+    if (fileData && fileData.content) {
+      const filename = 'visitor_' + from + '_' + Date.now() + '.' + (fileData.type === 'csv' ? 'csv' : fileData.type === 'html' ? 'html' : 'txt');
+      const fp = await generateFile(fileData.type, fileData.content, filename);
+      if (fp) {
+        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+        const link    = baseUrl + '/files/' + filename;
+        userState[from] = Object.assign({}, vState, { lastVisitorFile: { filename, request: msg } });
+        await sendWA(from, 'جاهز 😊\n\n📄 ' + (fileData.title || filename) + '\n\n🔗 ' + link + '\n\nلو تبي تعدّل قولي');
+        await sendWA(PHONE, '📎 ' + visitorName + ' طلب ملف: "' + msg.substring(0,60) + '"');
+      } else { await sendWA(from, 'صار خطأ، جرب مرة ثانية'); }
+    } else { await sendWA(from, 'ما قدرت أبني الملف، وضّح أكثر'); }
+    return;
   }
 
   // رد نواف الذكي
