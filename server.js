@@ -1563,6 +1563,14 @@ async function handleOwner(from, msg) {
 
     case 'create_file': {
       const request = analysis.task_title || msg;
+      // لو الطلب مبهم — اسأل عن التفاصيل
+      const words = request.trim().split(/\s+/).length;
+      const hasDetails = request.match(/جدول|تقرير|خطة|قائمة|نموذج|استبيان|أعمدة|بيانات|sheet|doc|form/i);
+      if (words < 5 && !hasDetails) {
+        userState[from] = { step: 'waiting_file_details', partialRequest: request };
+        await sendWA(from, '📄 ابني لك الملف — بس وضح أكثر:\n\n• وش المحتوى اللي تبيه بالضبط؟\n• نوع الملف: جدول، تقرير، قائمة، نموذج؟\n• فيه بيانات أو أعمدة معينة؟');
+        break;
+      }
       await sendWA(from, '⏳ أبني الملف...');
       try {
         const profile = await getProfile();
