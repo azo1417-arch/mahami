@@ -122,6 +122,27 @@ async function initDB() {
   await pool.query("ALTER TABLE html_files ADD COLUMN IF NOT EXISTS drive_link TEXT").catch(()=>{});
 
   await pool.query(
+    "CREATE TABLE IF NOT EXISTS scheduled_messages (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "owner TEXT NOT NULL, " +
+    "target_phone TEXT NOT NULL, " +
+    "target_name TEXT DEFAULT '', " +
+    "message TEXT NOT NULL, " +
+    "send_at TIMESTAMP NOT NULL, " +
+    "sent BOOLEAN DEFAULT FALSE, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS daily_reminders (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "owner TEXT NOT NULL, " +
+    "title TEXT NOT NULL, " +
+    "time TEXT DEFAULT '09:00', " +
+    "until_date TEXT, " +
+    "active BOOLEAN DEFAULT TRUE, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query(
     "CREATE TABLE IF NOT EXISTS owner_profile (" +
     "id BIGSERIAL PRIMARY KEY, " +
     "key TEXT UNIQUE NOT NULL, " +
@@ -397,7 +418,9 @@ async function analyzeOwner(msg, context) {
     '- قبول [اسم] = approve_name\n' +
     '- رفض [اسم] = reject_name\n' +
     '- ذكره/ذكر بعد X = remind_visitor\n' +
-    '- ارسل لـ[شخص] = send_message\n' +
+    '- ذكرني بعد X دقيقة/ساعة = add_reminder (date=اليوم, time=الوقت المحسوب)\n' +
+    '- ذكرني كل يوم بـ X حتى تاريخ Y = daily_reminder (task_title=المهمة, date=تاريخ النهاية)\n' +
+    '- ارسل/أرسل لـ[شخص] بعد X أو في تاريخ/وقت معين = scheduled_message (task_title=الرسالة, target_name=المستقبل, date=التاريخ, time=الوقت)\n' +
     '- مشغول/في اجتماع = busy\n' +
     '- رجعت/خلصت = back\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
@@ -460,7 +483,7 @@ async function nawafOwnerReply(msg, context) {
 }
 
 // ─── Nawaf Visitor Reply ──────────────────────────────────────────────────
-async function nawafVisitorReply(visitorName, msg, history) {
+async function nawafVisitorReply(visitorName, msg, history, isWife) {
   const visitorL = await getLessons('visitor_lessons');
   const nawafL   = await getLessons('nawaf_lessons');
   const lessons  = [visitorL, nawafL].filter(Boolean).join('\n');
@@ -470,17 +493,15 @@ async function nawafVisitorReply(visitorName, msg, history) {
   const prompt =
     'أنت "نواف" المساعد الشخصي لعبدالعزيز على واتساب.\n' +
     'شخصيتك: ودي ومرتب، تتكلم عامية نجدية سعودية أصيلة.\n' +
-    'ممنوع: "ينطيك" (الصح: يعطيك)، "بخبر"، "كيفك"، "شلونك"\n' +
-    'أمثلة صح: "ابشر"، "لا والله"، "أي تفضل"، "تمام"\n' +
-    '- "لا والله ما وصلني، بس الحين بشوف"\n' +
-    '- "أي، تفضل قلي وش تحتاج"\n' +
-    '- "تمام، بحطها عند عبدالعزيز"\n' +
-    'لا تكسير، لا خليجية. نجدي طبيعي.\n' +
+    'ممنوع: "ينطيك"، "بخبر"، "كيفك"، "شلونك"، "أبو عبدالعزيز" (لا تستخدم هذه الكنية أبداً)\n' +
+    'ممنوع: "تحت أمرش" (الصح: "تحت أمرك")\n' +
+    'أمثلة صح: "ابشر"، "لا والله"، "أي تفضل"، "تمام"، "الله يعطيك العافية"\n' +
+    (isWife ? 'هذه زوجة عبدالعزيز — تعاملها بود عائلي طبيعي\n' : '') +
     'مهمتك: مساعدة الزوار في التواصل مع عبدالعزيز.\n' +
     (lessons ? 'دروس من محادثات سابقة:\n' + lessons + '\n\n' : '') +
     'سجل المحادثة:\n' + histText + '\n\n' +
     visitorName + ': ' + msg + '\n\n' +
-    'رد قصير وطبيعي (جملة أو جملتين). إذا طلب محدد قل "تمام، أرسل التفاصيل".';
+    'رد قصير وطبيعي (جملة أو جملتين). لو طلب محدد قل "تمام، أرسل التفاصيل".';
   return callAI('claude-haiku-4-5-20251001', 300, prompt);
 }
 
@@ -1091,6 +1112,38 @@ cron.schedule('*/10 * * * * *', async function() {
 
 }, { timezone: 'Asia/Riyadh' });
 
+// ─── Cron: رسائل مجدولة كل دقيقة ────────────────────────────────────────
+cron.schedule('* * * * *', async function() {
+  try {
+    const now = new Date();
+    const msgs = await pool.query('SELECT * FROM scheduled_messages WHERE sent=false AND send_at<=$1', [now]);
+    for (const m of msgs.rows) {
+      await sendWA(m.target_phone, m.message);
+      await pool.query('UPDATE scheduled_messages SET sent=true WHERE id=$1', [m.id]);
+      await sendWA(m.owner, '✅ تم إرسال رسالتك لـ' + m.target_name);
+    }
+  } catch(e) { console.error('scheduled_messages cron:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
+// ─── Cron: تذكيرات يومية ─────────────────────────────────────────────────
+cron.schedule('* * * * *', async function() {
+  try {
+    const now = new Date();
+    const hm = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    const today = todayStr();
+    const reminders = await pool.query(
+      "SELECT * FROM daily_reminders WHERE active=true AND time=$1 AND (until_date IS NULL OR until_date>=$2)",
+      [hm, today]
+    );
+    for (const r of reminders.rows) {
+      await sendWA(r.owner, '🔔 تذكير يومي:\n📌 *' + r.title + '*' + (r.until_date ? '\n📅 حتى ' + r.until_date : ''));
+      if (r.until_date && r.until_date <= today) {
+        await pool.query('UPDATE daily_reminders SET active=false WHERE id=$1', [r.id]);
+      }
+    }
+  } catch(e) { console.error('daily_reminders cron:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
 // ─── Cron: ملخص صباحي ذكي 8 ص ───────────────────────────────────────────
 cron.schedule('0 8 * * *', async function() {
   const today = todayStr();
@@ -1596,16 +1649,51 @@ async function handleOwner(from, msg) {
       break;
     }
 
+    case 'daily_reminder': {
+      const title = analysis.task_title || msg;
+      const untilDate = analysis.date || null;
+      const time = analysis.time || '09:00';
+      await pool.query('INSERT INTO daily_reminders (owner,title,time,until_date) VALUES ($1,$2,$3,$4)',
+        [from, title, time, untilDate]);
+      const untilStr = untilDate ? ' حتى ' + untilDate : '';
+      await sendWA(from, '✅ سأذكرك كل يوم الساعة ' + fmt12(time) + ' بـ "' + title + '"' + untilStr);
+      break;
+    }
+
+    case 'scheduled_message': {
+      const msgToSend = analysis.task_title || analysis.message_to_send || msg;
+      const targetName = analysis.target_name || '';
+      let targetPhone = null;
+      if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
+        targetPhone = WIFE_PHONE;
+      } else {
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1', ['%'+targetName+'%']);
+        if (rel.rows.length) targetPhone = rel.rows[0].phone;
+      }
+      if (!targetPhone) { await sendWA(from, '❓ ما عرفت رقم ' + targetName + '، أضفه بـ "أضف جهة اتصال"'); break; }
+      const sendAt = analysis.date && analysis.time
+        ? new Date(analysis.date + 'T' + analysis.time + ':00')
+        : new Date(Date.now() + 60000);
+      await pool.query('INSERT INTO scheduled_messages (owner,target_phone,target_name,message,send_at) VALUES ($1,$2,$3,$4,$5)',
+        [from, targetPhone, targetName, msgToSend, sendAt]);
+      await sendWA(from, '✅ تمام! سأرسل لـ' + targetName + ' الساعة ' + fmt12(analysis.time||'') + (analysis.date?' يوم '+analysis.date:'') + '\n\nالرسالة: "' + msgToSend + '"');
+      break;
+    }
+
     case 'send_message': {
-      const msgToSend = analysis.message_to_send;
+      const msgToSend = analysis.message_to_send || analysis.task_title;
       if (!msgToSend) { await sendWA(from, '❓ وش الرسالة؟'); break; }
       let targetPhone = null;
       let targetName  = analysis.target_name || '';
-      if (targetName.includes('زوج')) {
+      if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
         targetPhone = WIFE_PHONE; targetName = 'الزوجة';
       } else {
-        const last = await pool.query("SELECT * FROM tasks WHERE requested_by!='' AND status IN ('pending','awaiting_visitor_confirm') ORDER BY created_at DESC LIMIT 1");
-        if (last.rows.length) { targetPhone = last.rows[0].requested_by; targetName = last.rows[0].requested_by_name; }
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1', ['%'+targetName+'%']);
+        if (rel.rows.length) { targetPhone = rel.rows[0].phone; }
+        else {
+          const last = await pool.query("SELECT * FROM tasks WHERE requested_by!='' AND status IN ('pending','awaiting_visitor_confirm') ORDER BY created_at DESC LIMIT 1");
+          if (last.rows.length) { targetPhone = last.rows[0].requested_by; targetName = last.rows[0].requested_by_name; }
+        }
       }
       if (targetPhone) { await sendWA(targetPhone, msgToSend); await sendWA(from, '✅ تم الإرسال لـ ' + targetName); }
       else { await sendWA(from, '❓ ما عرفت لمن أرسل'); }
@@ -2229,15 +2317,29 @@ async function handleOwnerState(from, msg, state) {
   if (state.step === 'waiting_edit_value') {
     const t     = state.task;
     const field = state.field;
-    let nv      = msg;
-    if (field === 'time' || field === 'date') {
-      const p = await parseTask('مهمة ' + (field==='time'?msg:'في '+msg));
-      if (field==='time' && p && p.time) nv = p.time;
-      else if (field==='date' && p && p.date) nv = p.date;
-      else { await sendWA(from, '❓ لم أفهم'); return; }
+    let nv      = msg.trim();
+    if (field === 'time') {
+      const p = await parseTask('مهمة الساعة ' + msg);
+      if (p && p.time) nv = p.time;
+      else {
+        // جرب تحليل مباشر
+        const timeMatch = msg.match(/(\d{1,2})(?::(\d{2}))?\s*(ص|صباح|م|مساء|عصر|ظهر|ليل)?/);
+        if (timeMatch) {
+          let h = parseInt(timeMatch[1]);
+          const m = parseInt(timeMatch[2]||'0');
+          const period = timeMatch[3]||'';
+          if (period.includes('م')||period.includes('مساء')||period.includes('عصر')) { if(h<12) h+=12; }
+          else if (period.includes('ص')||period.includes('صباح')) { if(h===12) h=0; }
+          nv = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        } else { await sendWA(from, '❓ ما فهمت الوقت، مثال: "10 ونص" أو "2 العصر"'); return; }
+      }
+    } else if (field === 'date') {
+      const p = await parseTask('مهمة في ' + msg);
+      if (p && p.date) nv = p.date;
+      else { await sendWA(from, '❓ ما فهمت التاريخ'); return; }
     }
     await pool.query('UPDATE tasks SET ' + field + '=$1 WHERE id=$2',[nv,t.id]);
-    await sendWA(from, '✅ تم التعديل!');
+    await sendWA(from, '✅ تم التعديل!\n📌 ' + t.title + (field==='time'?' — الساعة '+fmt12(nv):''));
     userState[from] = { step: 'idle' }; return;
   }
 
@@ -2265,29 +2367,38 @@ async function handleOwnerState(from, msg, state) {
 // ─── Handle Wife ──────────────────────────────────────────────────────────
 async function handleWife(from, msg) {
   try {
-    const keywords = ['خبز','حليب','تسوق','سوبرماركت','بقالة','دجاج','لحم','بيض'];
-    let memCtx = '';
-    for (const kw of keywords) {
-      if (msg.includes(kw)) {
-        const fact = await recallFact(kw);
-        if (fact) {
-          const days = Math.floor((new Date()-new Date(fact.updated_at))/(1000*60*60*24));
-          memCtx += 'آخر مرة اشترى عبدالعزيز ' + kw + ': ' + fact.value + ' (قبل ' + days + ' يوم)\n';
-        }
-      }
+    // جلب اسم الزوجة من DB
+    const contactRow = await pool.query('SELECT name FROM special_contacts WHERE phone=$1', [from]);
+    let wifeName = (contactRow.rows.length && contactRow.rows[0].name && contactRow.rows[0].name !== 'الزوجة')
+      ? contactRow.rows[0].name : null;
+
+    // لو عرّفت نفسها — احفظ الاسم
+    const nameMatch = msg.match(/اسمي\s+(\S+)/);
+    if (nameMatch && nameMatch[1]) {
+      wifeName = nameMatch[1];
+      await pool.query('UPDATE special_contacts SET name=$1 WHERE phone=$2', [wifeName, from]);
     }
+
+    const wifeDisplay = wifeName || 'أم عبدالعزيز';
+
     const prompt =
-      'أنت "نواف" مساعد عبدالعزيز. هذه زوجته، تعاملها باحترام وود.\n' +
-      'تكلم بعامية نجدية أصيلة، مثل: "ابشري"، "لا والله"، "أي تفضلي".\n' +
-      (memCtx ? 'معلومات مفيدة:\n' + memCtx + '\n' : '') +
-      'رسالة الزوجة: "' + msg + '"\n\n' +
-      'رد بشكل طبيعي ومفيد. إذا كان في الرسالة معلومة مهمة لعبدالعزيز أخبره بها.';
-    const reply = await callAI('claude-sonnet-4-20250514', 400, prompt);
+      'أنت "نواف" مساعد عبدالعزيز الشخصي على واتساب.\n' +
+      'هذه زوجة عبدالعزيز' + (wifeName ? ' اسمها ' + wifeName : '') + '.\n' +
+      'تعاملها بود وعفوية، مثل صديق قريب من العائلة.\n' +
+      'تكلم بعامية نجدية أصيلة مريحة: "ابشري"، "لا والله"، "أي تفضلي"، "تمام"، "الله يعطيك العافية"\n' +
+      'ممنوع: "تحت أمرش" (الصح: تحت أمرك)، "أبو عبدالعزيز" (هو زوجها مو كنيته)\n' +
+      'ممنوع: الكلام الرسمي المبالغ فيه\n' +
+      'لو قالت شي مثل "أنا بجهزها" رد طبيعي مثل "ابشري تفضلي" لا تسأل أسئلة إضافية ما طلبتها\n' +
+      'لو قالت "تأخر" أو أي كلام عن تأخر عبدالعزيز — تعاطف معها وأخبرها راح تبلغ عبدالعزيز\n' +
+      'رسالتها: "' + msg + '"\n\n' +
+      'رد قصير وطبيعي (جملة أو جملتين فقط).';
+
+    const reply = await callAI('claude-sonnet-4-20250514', 300, prompt);
     if (reply) await sendWA(from, reply);
-    const importantKw = ['طارئ','مهم','عاجل','مريض','مشكلة'];
-    if (importantKw.some(function(k) { return msg.includes(k); })) {
-      await sendWA(PHONE, '📱 *رسالة من الزوجة:*\n' + msg);
-    }
+
+    // أرسل كل رسائل الزوجة لعبدالعزيز
+    await sendWA(PHONE, '📱 *رسالة من ' + wifeDisplay + ':*\n' + msg);
+
   } catch(e) { console.error('Wife:', e.message); }
 }
 
