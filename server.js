@@ -1211,7 +1211,7 @@ cron.schedule('* * * * *', async function() {
     for (const m of msgs.rows) {
       await sendWA(m.target_phone, m.message);
       await pool.query('UPDATE scheduled_messages SET sent=true WHERE id=$1', [m.id]);
-      await sendWA(m.owner, '✅ تم إرسال رسالتك لـ' + m.target_name);
+      await sendWA(m.owner, '✅ أُرسلت لـ' + m.target_name + '\n📝 "' + m.message + '"');
     }
   } catch(e) { console.error('scheduled_messages cron:', e.message); }
 }, { timezone: 'Asia/Riyadh' });
@@ -1752,35 +1752,48 @@ async function handleOwner(from, msg) {
     }
 
     case 'scheduled_message': {
-      const msgToSend = analysis.task_title || analysis.message_to_send || msg;
-      const targetName = analysis.target_name || '';
-      let targetPhone = null;
+      // استخرج الرسالة الحقيقية من النص
+      let msgToSend = analysis.message_to_send || analysis.task_title || '';
+      // نظّف: احذف "ارسل لهذا الرقم XXX بعد دقيقة" وابقِ فقط نص الرسالة
+      msgToSend = msgToSend
+        .replace(/ارسل\s+(?:لهذا\s+الرقم\s+)?[\d\s\+]+(?:بعد\s+\w+)?/g,'')
+        .replace(/إرسال\s+رسالة\s+.*?\s+للرقم\s+[\d\+]+/g,'')
+        .trim();
+      // لو ما استخرج — جرب تحليل ذكي: كل ما بعد رقم الهاتف والوقت
+      if (!msgToSend) {
+        const afterPhone = msg.replace(/.*(?:966|0)?5\d{8}\s*/,'').replace(/بعد\s+\w+\s*/,'').trim();
+        msgToSend = afterPhone;
+      }
+      if (!msgToSend) { await sendWA(from, '❓ وش الرسالة اللي تبي أرسلها؟'); break; }
 
-      // لو الرسالة تحتوي رقم مباشر
-      const phoneMatch = msg.match(/(?:966|0)?5\d{8}/);
+      let targetPhone = null;
+      const phoneMatch = msg.match(/(?:\+?966|0)(5\d{8})/);
       if (phoneMatch) {
-        targetPhone = phoneMatch[0].startsWith('966') ? phoneMatch[0] : '966' + phoneMatch[0].replace(/^0/,'');
-      } else if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
+        targetPhone = '966' + phoneMatch[1];
+      } else if ((analysis.target_name||'').includes('زوج')) {
         targetPhone = WIFE_PHONE;
-      } else if (targetName) {
-        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1',['%'+targetName+'%']);
+      } else if (analysis.target_name) {
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1',['%'+analysis.target_name+'%']);
         if (rel.rows.length) targetPhone = rel.rows[0].phone;
       }
+      if (!targetPhone) { await sendWA(from, '❓ ما عرفت الرقم'); break; }
 
-      if (!targetPhone) { await sendWA(from, '❓ ما عرفت الرقم، أضفه بـ "أضف جهة اتصال [الاسم] [الرقم]"'); break; }
+      let sendAt = new Date(Date.now() + 60000);
+      if (analysis.date && analysis.time) sendAt = new Date(analysis.date + 'T' + analysis.time + ':00');
+      else if (analysis.time) sendAt = new Date(todayStr() + 'T' + analysis.time + ':00');
 
-      // احسب وقت الإرسال
-      let sendAt = new Date(Date.now() + 60000); // افتراضي بعد دقيقة
-      if (analysis.date && analysis.time) {
-        sendAt = new Date(analysis.date + 'T' + analysis.time + ':00');
-      } else if (analysis.time) {
-        sendAt = new Date(todayStr() + 'T' + analysis.time + ':00');
+      // استخرج الوقت من الرسالة مباشرة
+      const relTime = msg.match(/بعد\s+(\d+)\s*(دقيقة|دقائق|ساعة|ساعات)/);
+      if (relTime) {
+        const mins = (relTime[2].includes('ساعة')||relTime[2].includes('ساعات')) ? parseInt(relTime[1])*60 : parseInt(relTime[1]);
+        sendAt = new Date(Date.now() + mins*60000);
       }
 
       await pool.query('INSERT INTO scheduled_messages (owner,target_phone,target_name,message,send_at) VALUES ($1,$2,$3,$4,$5)',
         [from, targetPhone, targetPhone, msgToSend, sendAt]);
-      const timeStr = analysis.time ? ' الساعة ' + fmt12(analysis.time) : ' بعد دقيقة';
-      await sendWA(from, '✅ تمام! سأرسل' + timeStr + (analysis.date?' يوم '+analysis.date:'') + ' للرقم ' + targetPhone + '\n\nالرسالة: "' + msgToSend + '"');
+
+      const mins2 = Math.round((sendAt-Date.now())/60000);
+      await sendWA(from, '✅ ابشر، أرسلها بعد ' + (mins2 < 2 ? 'دقيقة' : mins2 + ' دقيقة'));
       break;
     }
 
@@ -1926,14 +1939,8 @@ async function handleOwner(from, msg) {
         else if (temp >= 30) desc = 'حر';
         else if (temp <= 15) desc = 'برد';
         else desc = 'حق فرة وكوب قهوة';
-        let reply = '🌤️ الجو في ' + data.city + ':\n\n';
-        reply += 'برا ' + desc + ' — *' + data.temp + '*\n';
-        reply += '☁️ ' + data.desc + '\n';
-        reply += '💧 رطوبة: ' + data.humidity + '\n';
-        reply += '💨 رياح: ' + data.wind + '\n';
-        reply += '☀️ UV: ' + data.uv;
-        await sendWA(from, reply);
-      } else { await sendWA(from, 'ما قدرت أجيب الطقس، جرب بعدين'); }
+        await sendWA(from, '🌤️ ' + data.temp + ' — برا ' + desc);
+      } else { await sendWA(from, 'ما قدرت أجيب الطقس'); }
       break;
     }
 
