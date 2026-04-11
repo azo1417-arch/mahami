@@ -488,7 +488,7 @@ async function parseTask(msg) {
     '- بدون تاريخ = null, بدون وقت = null\n\n' +
     'الرسالة: "' + processed + '"';
 
-  return callAIJson('claude-haiku-4-5-20251001', 300, prompt);
+  return callAIJson('claude-haiku-4-5', 300, prompt);
 }
 
 // ─── Analyze Owner ────────────────────────────────────────────────────────
@@ -534,13 +534,15 @@ async function analyzeOwner(msg, context) {
     '- أرسلني الملف PDF/بي دي اف/صدّره PDF = export_pdf\n' +
     '- وش صلاحياتك/صلاحيات نواف = show_permissions\n' +
     '- وقف/شغّل صلاحية [رقم أو اسم] = set_permission (task_title=الرقم أو الاسم, note=وقف أو شغّل)\n' +
-    '- الجو/الطقس/حرارة/بارد/حار = weather (task_title = اسم المدينة لو ذكرت)\n' +
+    '- الجو/الطقس/حرارة/بارد/حار/درجة/حرارة الجو = weather (task_title = اسم المدينة لو ذكرت)\n' +
     '- سعر الدولار/العملات/الريال/صرف = currency\n' +
     '- سعر الذهب = gold\n' +
     '- اخبار/خبر عن/وش صار = news (task_title = الموضوع)\n' +
     '- ابحث/وش هو/عرفني عن/وش تعرف عن = search (task_title = موضوع البحث)\n' +
     '- بعد X دقيقة/ساعة = احسب الوقت من ' + cur + '\n' +
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
+    '- مهم جداً: "ارسل رسالة في اجتماع" أو "ارسل لفلان" = send_message أو scheduled_message وليس add_meeting\n' +
+    '- add_meeting فقط لو فيه طلب حقيقي لتحديد موعد لقاء\n' +
     '- كلام عادي/سؤال/مشكلة/أي شيء ثاني = chat\n' +
     '- مهم: إذا ما تأكدت من الأمر اختر chat وليس unknown\n' +
     '- unknown فقط للرسائل الفارغة أو غير المفهومة كلياً';
@@ -557,11 +559,26 @@ async function nawafOwnerReply(msg, context) {
   const systemPrompt =
     'أنت "نواف" المساعد الشخصي لعبدالعزيز.\n' +
     'الوقت: ' + nowRiyadh + ' بتوقيت الرياض\n' +
-    'الفجر 3-6ص، الصبح 6-11ص، الظهر 11ص-3م، العصر 3-5م، المغرب 5-7م، العشاء 7م-3ص\n' +
-    'تكلم بعامية نجدية — ممنوع: "ينطيك"، "بخبر"، "كيفك"، "شلونك"\n' +
-    'قواعد: رد قصير ومباشر، جملة أو جملتين، الإيموجي في النهاية، لا تعلق على موضوع سابق\n' +
-    (lessons ? 'دروس:\n' + lessons + '\n' : '') +
-    (context ? 'سياق:\n' + context : '');
+    'الفجر 3-6ص، الصبح 6-11ص، الظهر 11ص-3م، العصر 3-5م، المغرب 5-7م، العشاء 7م-3ص\n\n' +
+    'اللهجة: عامية نجدية سعودية بيضاء فقط — لهجة أهل الرياض.\n' +
+    'كلمات مسموحة: "ابشر"، "تمام"، "أي"، "لا والله"، "عندي"، "بسويها"، "وش"، "ماشي"، "صح"، "خلاص"\n' +
+    'كلمات ممنوعة نهائياً (لهجات أخرى):\n' +
+    '- "شنو" / "شنو هذا" (عراقية/خليجية) ← الصح: "وش هذا"\n' +
+    '- "ينطيك" (خليجية) ← الصح: "يعطيك"\n' +
+    '- "بخبر" (شامية) ← الصح: "بقولك"\n' +
+    '- "كيفك" / "شلونك" (شامية/عراقية) ← الصح: "كيف الحال"\n' +
+    '- "هيك" / "هيكذا" (شامية)\n' +
+    '- "زعلان" (شامية) ← الصح: "مزعل"\n' +
+    '- "بره" ← الصح: "برا"\n' +
+    '- "ماشي" بمعنى "أوكي" مقبول بس مو كثير\n' +
+    'لو طلب فصحى تكلم فصحى.\n\n' +
+    'قواعد الرد:\n' +
+    '1. رد قصير — جملة أو جملتين فقط\n' +
+    '2. الإيموجي في النهاية مو البداية\n' +
+    '3. لا تعلق على موضوع سابق — ركز على السؤال الحالي\n' +
+    '4. لا تقول "ما عندي صلاحية" أو "ما أقدر أدخل قوقل"\n' +
+    (lessons ? '\nدروس:\n' + lessons + '\n' : '') +
+    (context ? '\nسياق:\n' + context : '');
 
   // استخرج تاريخ المحادثة من context وحوّله لـ messages
   const messages = [];
@@ -600,18 +617,26 @@ async function nawafVisitorReply(visitorName, msg, history, isWife) {
   }).join('\n');
   const prompt =
     'أنت "نواف" المساعد الشخصي لعبدالعزيز على واتساب.\n' +
-    'شخصيتك: ودي ومرتب، تتكلم عامية نجدية سعودية أصيلة.\n' +
-    'ممنوع: "ينطيك"، "بخبر"، "كيفك"، "شلونك"، "أبو عبدالعزيز" (لا تستخدم هذه الكنية أبداً)\n' +
-    'ممنوع: "تحت أمرش" (الصح: "تحت أمرك")\n' +
-    'أمثلة صح: "ابشر"، "لا والله"، "أي تفضل"، "تمام"، "الله يعطيك العافية"\n' +
-    'الإيموجي دائماً في نهاية الجملة مو في البداية — مثل: "تمام 👍" مو "👍 تمام"\n' +
-    (isWife ? 'هذه زوجة عبدالعزيز — تعاملها بود عائلي طبيعي\n' : '') +
+    'اللهجة: عامية نجدية سعودية بيضاء فقط — لهجة أهل الرياض.\n' +
+    'أمثلة صح: "ابشر"، "تمام"، "أي تفضل"، "لا والله"، "وش تبي"، "خلاص"، "الله يعطيك العافية"\n' +
+    'كلمات ممنوعة نهائياً:\n' +
+    '- "شنو" ← الصح: "وش"\n' +
+    '- "ينطيك" ← الصح: "يعطيك"\n' +
+    '- "بخبر" ← الصح: "بقولك"\n' +
+    '- "كيفك"/"شلونك" ← الصح: "كيف الحال"\n' +
+    '- "هيك"/"هيكذا" ← الصح: "كذا"\n' +
+    '- "زعلان" ← الصح: "مزعل"\n' +
+    '- "بره" ← الصح: "برا"\n' +
+    '- "أبو عبدالعزيز" ← لا تستخدم هذه الكنية أبداً\n' +
+    '- "تحت أمرش" ← الصح: "تحت أمرك"\n' +
+    'الإيموجي في نهاية الجملة فقط.\n' +
+    (isWife ? 'هذه زوجة عبدالعزيز — ود وعفوية، لا رسمية.\n' : '') +
     'مهمتك: مساعدة الزوار في التواصل مع عبدالعزيز.\n' +
-    (lessons ? 'دروس من محادثات سابقة:\n' + lessons + '\n\n' : '') +
+    (lessons ? 'دروس:\n' + lessons + '\n\n' : '') +
     'سجل المحادثة:\n' + histText + '\n\n' +
     visitorName + ': ' + msg + '\n\n' +
-    'رد قصير وطبيعي (جملة أو جملتين). لو طلب محدد قل "تمام، أرسل التفاصيل".';
-  return callAI('claude-haiku-4-5-20251001', 300, prompt);
+    'رد قصير (جملة أو جملتين). لو طلب محدد قل "تمام، أرسل التفاصيل".';
+  return callAI('claude-haiku-4-5', 300, prompt);
 }
 
 // ─── Analyze Visitor ──────────────────────────────────────────────────────
@@ -634,7 +659,7 @@ async function analyzeVisitor(msg, context) {
     '- meeting_request: طلب اجتماع أو لقاء\n' +
     '- task_request: طلب شيء من عبدالعزيز\n' +
     '- task_title: انسخ الطلب كما قاله بدون تعديل';
-  return callAIJson('claude-haiku-4-5-20251001', 300, prompt);
+  return callAIJson('claude-haiku-4-5', 300, prompt);
 }
 
 // ─── قراءة PDF أو صورة واستخراج تاريخ الانتهاء ──────────────────────────
@@ -1360,7 +1385,6 @@ app.post('/webhook', async function(req, res) {
       const imgData = md.imageMessageData || {};
       const fmd = md.fileMessageData || {};
       msg = imgData.caption || fmd.caption || '';
-      // جرب downloadUrl من كل المصادر
       const dlUrl = imgData.downloadUrl || fmd.downloadUrl || null;
       if (dlUrl) {
         fileUrl = dlUrl;
@@ -1370,6 +1394,11 @@ app.post('/webhook', async function(req, res) {
         fileUrl = 'data:image/jpeg;base64,' + imgData.jpegThumbnail;
         fileType = 'jpeg';
         console.log('🖼️ Using jpegThumbnail, length:', imgData.jpegThumbnail.length);
+      }
+      // احفظ الرابط الأصلي
+      if (dlUrl) {
+        const _sender = body && body.senderData && body.senderData.chatId && body.senderData.chatId.replace('@c.us','');
+        if (_sender) userState[_sender] = Object.assign(userState[_sender]||{}, { lastImageOrigUrl: dlUrl });
       }
       console.log('🖼️ IMAGE fileUrl:', fileUrl ? fileUrl.substring(0,60) : 'NULL', '| caption:', msg);
     } else if (typeMsg === 'audioMessage' || typeMsg === 'voiceMessage' || md.audioMessageData || md.voiceMessageData) {
@@ -1505,17 +1534,16 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
   try {
     let base64;
 
-    // لو data URL (thumbnail) — جرب تحميل الصورة الكاملة أولاً
+    // لو data URL (thumbnail) — جرب تحميل الصورة الكاملة
     if (fileUrl && fileUrl.startsWith('data:')) {
-      // thumbnail موجود لكن نحاول نجيب الصورة الكاملة من state
-      const lastFile = (userState[from] || {}).lastFile;
-      if (lastFile && lastFile.url && !lastFile.url.startsWith('data:')) {
+      const origUrl = (userState[from]||{}).lastImageOrigUrl;
+      if (origUrl) {
         try {
-          const resolvedUrl = await getFileUrl(lastFile.url);
-          const r = await axios.get(resolvedUrl, { responseType: 'arraybuffer', timeout: 20000 });
-          if (r.data && r.data.byteLength > 10000) {
+          const resolvedUrl = await getFileUrl(origUrl);
+          const r = await axios.get(resolvedUrl, { responseType: 'arraybuffer', timeout: 25000 });
+          if (r.data && r.data.byteLength > 5000) {
             base64 = Buffer.from(r.data).toString('base64');
-            console.log('✅ Got full image, size:', r.data.byteLength);
+            console.log('✅ Got full image from origUrl, size:', r.data.byteLength);
           }
         } catch(e) { console.log('Full image failed, using thumbnail'); }
       }
@@ -1563,11 +1591,14 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
         { type: 'text', text:
           'السؤال: ' + q + '\n\n' +
+          'تاريخ اليوم الحقيقي: ' + todayStr() + '\n\n' +
           'قواعد الرد:\n' +
           '- اقرأ كل النصوص في الصورة بدقة (أسماء، أرقام، عناوين، تواريخ)\n' +
           '- أجب على السؤال مباشرة بعامية نجدية\n' +
           '- لو في أرقام هواتف أو عناوين استخرجها\n' +
           '- لو سألك عن موقع الشركة قل المدينة مو الوصف البصري\n' +
+          '- لو في تواريخ اقرأها كما هي بدون أي تعليق على صحتها أو مستقبليتها\n' +
+          '- لا تحكم على صحة أي وثيقة أو تاريخ — فقط اقرأ وأجب\n' +
           '- جملة أو جملتين فقط — لا تطوّل'
         }
       ];
@@ -1580,6 +1611,16 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
 
     const answer = res.data.content[0].text.trim();
     await sendWA(from, answer);
+
+    // احفظ الصورة عشان يتذكرها
+    if (fileType !== 'pdf') {
+      const imgType = fileType === 'png' ? 'image/png' : 'image/jpeg';
+      userState[from] = Object.assign(userState[from]||{}, {
+        lastImageDesc: answer,
+        lastImageBase64: base64,
+        lastImageType: imgType
+      });
+    }
 
     // لو السؤال عن موقع/عنوان — أضف رابط خرائط
     const isLocationQ = question && (question.includes('وين') || question.includes('موقع') || question.includes('عنوان') || question.includes('فين'));
@@ -1987,12 +2028,15 @@ async function handleOwner(from, msg) {
       if (data) {
         const temp = parseInt(data.temp);
         let desc = '';
-        if (temp >= 38) desc = 'عجاج وملاهيب';
-        else if (temp >= 30) desc = 'حر';
-        else if (temp <= 15) desc = 'برد';
-        else desc = 'حق فرة وكوب قهوة';
-        await sendWA(from, '🌤️ ' + data.temp + ' — برا ' + desc);
-      } else { await sendWA(from, 'ما قدرت أجيب الطقس'); }
+        if (temp >= 38) desc = 'عجاج وملاهيب 🔥';
+        else if (temp >= 30) desc = 'حر 🌞';
+        else if (temp <= 15) desc = 'برد 🧥';
+        else desc = 'حق فرة وكوب قهوة ☕';
+        let reply = '🌤️ الجو برا ' + desc + '\n';
+        reply += '🌡️ ' + data.temp + ' (تحس إنها ' + data.feels + ')\n';
+        reply += '💧 رطوبة: ' + data.humidity + ' | 💨 رياح: ' + data.wind;
+        await sendWA(from, reply);
+      } else { await sendWA(from, 'ما قدرت أجيب الطقس، جرب بعدين'); }
       break;
     }
 
@@ -2433,7 +2477,38 @@ async function handleOwner(from, msg) {
 
     case 'unknown':
     default: {
-      // لو الرسالة تحتوي سؤال عن مهمة موجودة، ابحث فيها أولاً
+      // لو يسأل عن آخر صورة — استخدمها مباشرة
+      const imageWords = ['آخر صورة','الصورة','الصوره','هذي الصورة','الصور'];
+      const isAskingImage = imageWords.some(function(w){ return msg.includes(w); });
+      const lastImgDesc = (userState[from]||{}).lastImageDesc;
+      const lastImgBase64 = (userState[from]||{}).lastImageBase64;
+      const lastImgType = (userState[from]||{}).lastImageType || 'image/jpeg';
+
+      if (isAskingImage && lastImgBase64) {
+        // أعد تحليل الصورة بالسؤال الجديد
+        try {
+          const imgContent = [
+            { type: 'image', source: { type: 'base64', media_type: lastImgType, data: lastImgBase64 } },
+            { type: 'text', text:
+              'السؤال: ' + msg + '\n\n' +
+              'اقرأ الصورة وأجب على السؤال مباشرة بعامية نجدية، جملة أو جملتين فقط.\n' +
+              'اقرأ كل النصوص والأرقام والعناوين بدقة.'
+            }
+          ];
+          const imgRes = await axios.post('https://api.anthropic.com/v1/messages', {
+            model: 'claude-sonnet-4-20250514', max_tokens: 300,
+            messages: [{ role: 'user', content: imgContent }]
+          }, { headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+          const imgAnswer = imgRes.data.content[0].text.trim();
+          await sendWA(from, imgAnswer);
+          // رابط خرائط لو سأل عن موقع
+          if (msg.includes('وين') || msg.includes('موقع') || msg.includes('عنوان')) {
+            const mapsLink = 'https://www.google.com/maps/search/' + encodeURIComponent(imgAnswer.substring(0,60));
+            await sendWA(from, '🗺️ ' + mapsLink);
+          }
+          break;
+        } catch(e) {}
+      }
       const checkWords = ['سجلتها','سجلته','سجلتم','موجودة','موجود','ثبتتها','حطيتها','عندك','عندي','سبق'];
       const isChecking = checkWords.some(function(w){ return msg.includes(w); });
       if (isChecking) {
@@ -2681,12 +2756,15 @@ async function handleWife(from, msg) {
     const prompt =
       'أنت "نواف" مساعد عبدالعزيز الشخصي على واتساب.\n' +
       'هذه زوجة عبدالعزيز' + (wifeName ? ' اسمها ' + wifeName : '') + '.\n' +
-      'تعاملها بود وعفوية، مثل صديق قريب من العائلة.\n' +
-      'تكلم بعامية نجدية أصيلة مريحة: "ابشري"، "لا والله"، "أي تفضلي"، "تمام"، "الله يعطيك العافية"\n' +
-      'ممنوع: "تحت أمرش" (الصح: تحت أمرك)، "أبو عبدالعزيز" (هو زوجها مو كنيته)\n' +
+      'اللهجة: عامية نجدية سعودية بيضاء فقط.\n' +
+      'أمثلة صح: "ابشري"، "لا والله"، "أي تفضلي"، "تمام"، "الله يعطيك العافية"\n' +
+      'ممنوع نهائياً: "شنو"، "ينطيك"، "هيك"، "زعلان"، "كيفك"، "شلونك"، "بخبر"، "بره"\n' +
+      'ممنوع: "تحت أمرش" ← الصح: "تحت أمرك"\n' +
+      'ممنوع: "أبو عبدالعزيز" — هو زوجها مو كنيته\n' +
       'ممنوع: الكلام الرسمي المبالغ فيه\n' +
-      'لو قالت شي مثل "أنا بجهزها" رد طبيعي مثل "ابشري تفضلي" لا تسأل أسئلة إضافية ما طلبتها\n' +
-      'لو قالت "تأخر" أو أي كلام عن تأخر عبدالعزيز — تعاطف معها وأخبرها راح تبلغ عبدالعزيز\n' +
+      'لو قالت "أنا بجهزها" ← رد: "ابشري تفضلي" فقط\n' +
+      'لو قالت "تأخر" ← تعاطف وأخبرها ستبلغ عبدالعزيز\n' +
+      'الإيموجي في نهاية الجملة فقط.\n' +
       'رسالتها: "' + msg + '"\n\n' +
       'رد قصير وطبيعي (جملة أو جملتين فقط).';
 
@@ -2829,8 +2907,8 @@ async function handleVisitor(from, msg) {
         let reply = '';
         const temp = parseInt(data.temp);
         if (temp >= 38) reply = 'الجو برا عجاج وملاهيب — ' + data.temp + '\n';
-        else if (temp >= 30) reply = 'الجو حار بره — ' + data.temp + '\n';
-        else if (temp <= 15) reply = 'الجو برد بره — ' + data.temp + '\n';
+        else if (temp >= 30) reply = 'الجو حار برا — ' + data.temp + '\n';
+        else if (temp <= 15) reply = 'الجو بارد برا — ' + data.temp + '\n';
         else reply = 'الجو حق فرة وكوب قهوة — ' + data.temp + '\n';
         reply += data.desc + '\nرطوبة: ' + data.humidity + ' | رياح: ' + data.wind;
         await sendWA(from, reply);
