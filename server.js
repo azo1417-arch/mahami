@@ -258,17 +258,19 @@ async function sendWAPdfFromBuffer(to, pdfBuffer, filename, caption) {
 }
 
 async function getFileUrl(msgUrl) {
-  // لو data URL — أرجعه مباشرة
   if (!msgUrl || msgUrl.startsWith('data:')) return msgUrl;
   // جرب تحميل مباشر أولاً
   try {
-    const r = await axios.get(msgUrl, { responseType: 'arraybuffer', timeout: 15000 });
-    if (r.data && r.data.byteLength > 0) return msgUrl;
+    const r = await axios.get(msgUrl, { responseType: 'arraybuffer', timeout: 10000 });
+    if (r.data && r.data.byteLength > 1000) return msgUrl; // أكبر من 1KB يعني نجح
   } catch(e) {}
   // جرب Green API getFileDownloadUrl
   try {
     const r = await axios.get(GA_URL + '/getFileDownloadUrl/' + GA_TOKEN + '?url=' + encodeURIComponent(msgUrl), { timeout: 15000 });
-    if (r.data && r.data.downloadUrl) return r.data.downloadUrl;
+    if (r.data && r.data.downloadUrl) {
+      console.log('✅ Got downloadUrl from Green API');
+      return r.data.downloadUrl;
+    }
   } catch(e) { console.log('getFileDownloadUrl failed:', e.message); }
   return msgUrl;
 }
@@ -1340,18 +1342,20 @@ app.post('/webhook', async function(req, res) {
       }
     } else if (typeMsg === 'imageMessage' || md.imageMessageData) {
       const imgData = md.imageMessageData || {};
-      msg = imgData.caption || '';
-      // جرب downloadUrl أولاً
-      if (imgData.downloadUrl) {
-        fileUrl = imgData.downloadUrl;
+      const fmd = md.fileMessageData || {};
+      msg = imgData.caption || fmd.caption || '';
+      // جرب downloadUrl من كل المصادر
+      const dlUrl = imgData.downloadUrl || fmd.downloadUrl || null;
+      if (dlUrl) {
+        fileUrl = dlUrl;
         fileType = 'jpeg';
+        console.log('🖼️ IMAGE downloadUrl:', dlUrl.substring(0,80));
       } else if (imgData.jpegThumbnail) {
-        // استخدم thumbnail مباشرة كـ base64
         fileUrl = 'data:image/jpeg;base64,' + imgData.jpegThumbnail;
         fileType = 'jpeg';
         console.log('🖼️ Using jpegThumbnail, length:', imgData.jpegThumbnail.length);
       }
-      console.log('🖼️ IMAGE URL:', fileUrl ? fileUrl.substring(0,60) : 'NULL', '| caption:', msg);
+      console.log('🖼️ IMAGE fileUrl:', fileUrl ? fileUrl.substring(0,60) : 'NULL', '| caption:', msg);
     } else if (typeMsg === 'audioMessage' || typeMsg === 'voiceMessage' || md.audioMessageData || md.voiceMessageData) {
       const audioData = md.audioMessageData || md.voiceMessageData || md.fileMessageData || {};
       const audioUrl = audioData.downloadUrl || (md.fileMessageData && md.fileMessageData.downloadUrl) || null;
