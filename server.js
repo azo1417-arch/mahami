@@ -553,25 +553,41 @@ async function nawafOwnerReply(msg, context) {
   const nawafL  = await getLessons('nawaf_lessons');
   const lessons = [ownerL, nawafL].filter(Boolean).join('\n');
   const nowRiyadh = new Date().toLocaleString('ar-SA', { timeZone: 'Asia/Riyadh', hour: '2-digit', minute: '2-digit', hour12: true });
-  const prompt =
+
+  const systemPrompt =
     'أنت "نواف" المساعد الشخصي لعبدالعزيز.\n' +
-    'الوقت الحالي بتوقيت الرياض: ' + nowRiyadh + '\n' +
-    'تحديد أوقات اليوم بالعامية السعودية: الفجر 3-6ص، الصبح 6-11ص، الضحى 10-11ص، الظهر 11ص-3م، العصر 3-5م، المغرب 5-7م، العشاء 7م-3ص — الساعة 2:30 = ظهر وليس "بعد الظهر"\n' +
-    'أنت ذكي جداً مثل Claude AI — تعرف الطب، التقنية، السيارات، التاريخ، العلوم، القانون، الدين، الاقتصاد، وأي موضوع.\n' +
-    'تتكلم بعامية نجدية سعودية أصيلة — بالضبط زي أهل الرياض.\n' +
-    'كلمات ممنوعة: "ينطيك"، "بخبر"، "كيفك"، "شلونك"، "هلا والله"\n\n' +
-    'قواعد الرد:\n' +
-    '1. الردود قصيرة ومباشرة — جملة أو جملتين كحد أقصى\n' +
-    '2. لا تشرح ولا تطوّل إذا السؤال بسيط\n' +
-    '3. لو سألك "وش ماشي الحال" أو "وش الأخبار" — رد بكلمة أو جملة قصيرة فقط\n' +
-    '4. لا تقول أبداً "ما عندي صلاحية" أو "ما أقدر أدخل على قوقل"\n' +
-    '5. لا تقول "وضح أكثر" — اجتهد وأجب\n' +
-    '6. الإيموجي دائماً في نهاية الجملة مو في البداية — مثل: "تمام 👍" مو "👍 تمام"\n\n' +
-    'السياق الحالي:\n' + context + '\n\n' +
-    (lessons ? 'دروس:\n' + lessons + '\n\n' : '') +
-    'عبدالعزيز: ' + msg + '\n\n' +
-    'رد مباشر ومفيد بدون مقدمات.';
-  return callAI('claude-sonnet-4-20250514', 800, prompt);
+    'الوقت: ' + nowRiyadh + ' بتوقيت الرياض\n' +
+    'الفجر 3-6ص، الصبح 6-11ص، الظهر 11ص-3م، العصر 3-5م، المغرب 5-7م، العشاء 7م-3ص\n' +
+    'تكلم بعامية نجدية — ممنوع: "ينطيك"، "بخبر"، "كيفك"، "شلونك"\n' +
+    'قواعد: رد قصير ومباشر، جملة أو جملتين، الإيموجي في النهاية، لا تعلق على موضوع سابق\n' +
+    (lessons ? 'دروس:\n' + lessons + '\n' : '') +
+    (context ? 'سياق:\n' + context : '');
+
+  // استخرج تاريخ المحادثة من context وحوّله لـ messages
+  const messages = [];
+  const histLines = context.match(/سجل المحادثة الأخيرة:\n([\s\S]*?)(?=\n\n|$)/);
+  if (histLines && histLines[1]) {
+    histLines[1].trim().split('\n').forEach(function(line) {
+      if (line.startsWith('عبدالعزيز: ')) {
+        messages.push({ role: 'user', content: line.replace('عبدالعزيز: ','') });
+      } else if (line.startsWith('نواف: ')) {
+        messages.push({ role: 'assistant', content: line.replace('نواف: ','') });
+      }
+    });
+  }
+  messages.push({ role: 'user', content: msg });
+
+  try {
+    const res = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514', max_tokens: 300,
+      system: systemPrompt,
+      messages: messages
+    }, { headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+    return res.data.content[0].text.trim();
+  } catch(e) {
+    console.error('nawafOwnerReply error:', e.message);
+    return null;
+  }
 }
 
 // ─── Nawaf Visitor Reply ──────────────────────────────────────────────────
@@ -1540,11 +1556,20 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
       ];
     } else {
       const mediaType = fileType === 'png' ? 'image/png' : 'image/jpeg';
+      const q = question && question.trim()
+        ? question.trim()
+        : 'وش في هذي الصورة؟';
       content = [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-        { type: 'text', text: question
-          ? question + '\n\nأجب بجملة أو جملتين فقط بعامية نجدية.'
-          : 'صف ما في الصورة بجملة أو جملتين فقط. لا تطوّل.' }
+        { type: 'text', text:
+          'السؤال: ' + q + '\n\n' +
+          'قواعد الرد:\n' +
+          '- اقرأ كل النصوص في الصورة بدقة (أسماء، أرقام، عناوين، تواريخ)\n' +
+          '- أجب على السؤال مباشرة بعامية نجدية\n' +
+          '- لو في أرقام هواتف أو عناوين استخرجها\n' +
+          '- لو سألك عن موقع الشركة قل المدينة مو الوصف البصري\n' +
+          '- جملة أو جملتين فقط — لا تطوّل'
+        }
       ];
     }
 
@@ -1555,6 +1580,15 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
 
     const answer = res.data.content[0].text.trim();
     await sendWA(from, answer);
+
+    // لو السؤال عن موقع/عنوان — أضف رابط خرائط
+    const isLocationQ = question && (question.includes('وين') || question.includes('موقع') || question.includes('عنوان') || question.includes('فين'));
+    if (isLocationQ) {
+      // استخرج اسم الشركة أو المكان من الجواب
+      const locationQuery = answer.replace(/[✅❌🗺️📍]/g,'').trim().substring(0,60);
+      const mapsLink = 'https://www.google.com/maps/search/' + encodeURIComponent(locationQuery);
+      await sendWA(from, '🗺️ ' + mapsLink);
+    }
 
     // لو فيه تاريخ انتهاء في الجواب — اسأل عن التذكير
     const dateMatch = answer.match(/(\d{4}-\d{2}-\d{2})/);
