@@ -1489,9 +1489,21 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
   try {
     let base64;
 
-    // لو data URL (thumbnail مباشر)
+    // لو data URL (thumbnail) — جرب تحميل الصورة الكاملة أولاً
     if (fileUrl && fileUrl.startsWith('data:')) {
-      base64 = fileUrl.split(',')[1];
+      // thumbnail موجود لكن نحاول نجيب الصورة الكاملة من state
+      const lastFile = (userState[from] || {}).lastFile;
+      if (lastFile && lastFile.url && !lastFile.url.startsWith('data:')) {
+        try {
+          const resolvedUrl = await getFileUrl(lastFile.url);
+          const r = await axios.get(resolvedUrl, { responseType: 'arraybuffer', timeout: 20000 });
+          if (r.data && r.data.byteLength > 10000) {
+            base64 = Buffer.from(r.data).toString('base64');
+            console.log('✅ Got full image, size:', r.data.byteLength);
+          }
+        } catch(e) { console.log('Full image failed, using thumbnail'); }
+      }
+      if (!base64) base64 = fileUrl.split(',')[1];
     } else {
       // جرب تحسين الرابط أولاً
       const resolvedUrl = await getFileUrl(fileUrl);
@@ -1530,12 +1542,14 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
       const mediaType = fileType === 'png' ? 'image/png' : 'image/jpeg';
       content = [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-        { type: 'text', text: question + '\n\nأجب بعامية نجدية مختصرة ومفيدة. صف ما تشوفه وأجب على السؤال.' }
+        { type: 'text', text: question
+          ? question + '\n\nأجب بجملة أو جملتين فقط بعامية نجدية.'
+          : 'صف ما في الصورة بجملة أو جملتين فقط. لا تطوّل.' }
       ];
     }
 
     const res = await axios.post('https://api.anthropic.com/v1/messages', {
-      model: 'claude-sonnet-4-20250514', max_tokens: 800,
+      model: 'claude-sonnet-4-20250514', max_tokens: 300,
       messages: [{ role: 'user', content }]
     }, { headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
 
