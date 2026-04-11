@@ -1392,23 +1392,44 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
     if (fileUrl && fileUrl.startsWith('data:')) {
       base64 = fileUrl.split(',')[1];
     } else {
-      // تحميل من رابط — نجرب بـ Authorization أولاً ثم بدونه
+      // تحميل من Green API — جرب طرق متعددة
       let responseData;
-      try {
-        const r = await axios.get(fileUrl, {
-          responseType: 'arraybuffer', timeout: 20000,
-          headers: { 'Authorization': 'Bearer ' + GA_TOKEN }
-        });
-        responseData = r.data;
-      } catch(e1) {
-        try {
+      const downloadAttempts = [
+        // محاولة 1: Green API download endpoint
+        async () => {
+          const GA_URL_BASE = 'https://api.green-api.com/waInstance' + process.env.GA_INSTANCE;
+          const r = await axios.post(GA_URL_BASE + '/downloadFile/' + GA_TOKEN,
+            { chatId: from.includes('@') ? from : from + '@c.us', idMessage: '' },
+            { timeout: 20000 }
+          );
+          return r.data;
+        },
+        // محاولة 2: مباشر مع Authorization
+        async () => {
+          const r = await axios.get(fileUrl, {
+            responseType: 'arraybuffer', timeout: 20000,
+            headers: { 'Authorization': 'Bearer ' + GA_TOKEN }
+          });
+          return r.data;
+        },
+        // محاولة 3: مباشر بدون Authorization
+        async () => {
           const r = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
-          responseData = r.data;
-        } catch(e2) {
-          console.error('File download failed:', e2.message);
-          await sendWA(from, '❌ ما قدرت أحمل الملف. جرب تعيد إرساله');
-          return;
+          return r.data;
         }
+      ];
+
+      for (const attempt of downloadAttempts) {
+        try {
+          responseData = await attempt();
+          if (responseData) break;
+        } catch(e) { console.log('Download attempt failed:', e.message); }
+      }
+
+      if (!responseData) {
+        console.error('All download attempts failed for:', fileUrl);
+        await sendWA(from, '❌ ما قدرت أحمل الملف. جرب تعيد إرساله');
+        return;
       }
       base64 = Buffer.from(responseData).toString('base64');
     }
@@ -1951,22 +1972,42 @@ async function handleOwner(from, msg) {
 
     case 'export_pdf': {
       let st = userState[from] || {};
-      if (!st.lastGeneratedFile) {
-        st.lastGeneratedFile = await getLastFile(from);
-      }
+      if (!st.lastGeneratedFile) st.lastGeneratedFile = await getLastFile(from);
       if (!st.lastGeneratedFile) { await sendWA(from, '❓ ما عندي ملف أحوّله، سوّ ملف أولاً'); break; }
       await sendWA(from, '⏳ أحوّل الملف PDF...');
       try {
-        const pdfBase64 = await exportDriveFilePdf(st.lastGeneratedFile.link, st.lastGeneratedFile.title || 'ملف');
-        if (pdfBase64) {
-          const filename = (st.lastGeneratedFile.title || 'ملف').substring(0, 30) + '.pdf';
-          await sendWAFile(from, pdfBase64, filename, '📄 ' + (st.lastGeneratedFile.title || 'ملف'));
+        const link = st.lastGeneratedFile.link || '';
+        // لو رابط Drive — صدّر PDF مباشرة
+        if (link.includes('docs.google.com')) {
+          const pdfBase64 = await exportDriveFilePdf(link, st.lastGeneratedFile.title || 'ملف');
+          if (pdfBase64) {
+            const filename = (st.lastGeneratedFile.title || 'ملف').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g,'_').substring(0,30) + '.pdf';
+            // احفظ PDF مؤقتاً في DB وأرسله كرابط
+            const pdfId = 'pdf_' + Date.now();
+            await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)',
+              [pdfId, from, filename, '<base64pdf>' + pdfBase64]).catch(()=>{});
+            // أرسل مباشرة كـ base64
+            await sendWAFile(from, pdfBase64, filename, '📄 ' + (st.lastGeneratedFile.title || 'ملف'));
+          } else {
+            // fallback — أرسل رابط تنزيل PDF من Drive مباشرة
+            const fileIdMatch = link.match(/\/d\/([a-zA-Z0-9_-]+)/);
+            if (fileIdMatch) {
+              const pdfUrl = 'https://docs.google.com/document/d/' + fileIdMatch[1] + '/export?format=pdf';
+              const chatId = from.includes('@') ? from : from + '@c.us';
+              await axios.post(GA_URL + '/sendFileByUrl/' + GA_TOKEN, {
+                chatId, urlFile: pdfUrl, fileName: 'ملف.pdf', caption: '📄 ' + (st.lastGeneratedFile.title || 'ملف')
+              });
+            } else {
+              await sendWA(from, '❌ ما قدرت أحوّل الملف\n\n🔗 افتح الرابط وحمّله: ملف ← تنزيل ← PDF\n' + link);
+            }
+          }
         } else {
-          await sendWA(from, '❌ ما قدرت أحوّل الملف. افتح الرابط وحمّله من: ملف ← تنزيل ← PDF\n\n🔗 ' + st.lastGeneratedFile.link);
+          // رابط Railway — افتحه في المتصفح وحمّله PDF
+          await sendWA(from, '🖨️ افتح الرابط واضغط "طباعة" ثم "حفظ كـ PDF":\n\n🔗 ' + link);
         }
       } catch(e) {
         console.error('export_pdf error:', e.message);
-        await sendWA(from, '❌ صار خطأ في التحويل');
+        await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,80));
       }
       break;
     }
