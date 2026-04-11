@@ -177,6 +177,32 @@ async function sendWAFile(to, fileBase64, filename, caption) {
   } catch(e) { console.error('WA File Error:', e.message); }
 }
 
+async function sendWAPdfFromBuffer(to, pdfBuffer, filename, caption) {
+  try {
+    const chatId = to.includes('@') ? to : to + '@c.us';
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('chatId', chatId);
+    form.append('caption', caption || '');
+    form.append('fileName', filename);
+    form.append('file', Buffer.from(pdfBuffer), {
+      filename: filename,
+      contentType: 'application/pdf'
+    });
+    const res = await axios.post(GA_URL + '/sendFileByUpload/' + GA_TOKEN, form, {
+      headers: form.getHeaders(),
+      timeout: 60000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+    console.log('✅ PDF sent:', res.data);
+    return true;
+  } catch(e) {
+    console.error('sendWAPdf error:', e.response?.status, e.message);
+    return false;
+  }
+}
+
 async function transcribeAudio(audioUrl) {
   try {
     const OPENAI_KEY = process.env.OPENAI_API_KEY;
@@ -213,27 +239,23 @@ async function transcribeAudio(audioUrl) {
   }
 }
 
-async function exportDriveFilePdf(driveLink, title) {
+async function exportDriveFilePdf(driveLink) {
   try {
-    // استخرج الـ fileId من الرابط
     const match = driveLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
     if (!match) return null;
     const fileId = match[1];
-
     const token = await getOAuthToken();
     if (!token) return null;
     const { google } = require('googleapis');
     const client = await getOAuthClient();
     client.setCredentials(token);
+    client.on('tokens', async function(t) { await saveOAuthToken(Object.assign({}, token, t)); });
     const drive = google.drive({ version: 'v3', auth: client });
-
-    // صدّر كـ PDF
     const res = await drive.files.export(
       { fileId, mimeType: 'application/pdf' },
       { responseType: 'arraybuffer' }
     );
-    const base64 = Buffer.from(res.data).toString('base64');
-    return base64;
+    return Buffer.from(res.data);
   } catch(e) {
     console.error('exportDriveFilePdf:', e.message);
     return null;
@@ -1977,37 +1999,23 @@ async function handleOwner(from, msg) {
       await sendWA(from, '⏳ أحوّل الملف PDF...');
       try {
         const link = st.lastGeneratedFile.link || '';
-        // لو رابط Drive — صدّر PDF مباشرة
+        const title = (st.lastGeneratedFile.title || 'ملف').substring(0, 30);
+        const filename = title.replace(/\s+/g, '_') + '.pdf';
+
         if (link.includes('docs.google.com')) {
-          const pdfBase64 = await exportDriveFilePdf(link, st.lastGeneratedFile.title || 'ملف');
-          if (pdfBase64) {
-            const filename = (st.lastGeneratedFile.title || 'ملف').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g,'_').substring(0,30) + '.pdf';
-            // احفظ PDF مؤقتاً في DB وأرسله كرابط
-            const pdfId = 'pdf_' + Date.now();
-            await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)',
-              [pdfId, from, filename, '<base64pdf>' + pdfBase64]).catch(()=>{});
-            // أرسل مباشرة كـ base64
-            await sendWAFile(from, pdfBase64, filename, '📄 ' + (st.lastGeneratedFile.title || 'ملف'));
+          const pdfBuffer = await exportDriveFilePdf(link);
+          if (pdfBuffer) {
+            const ok = await sendWAPdfFromBuffer(from, pdfBuffer, filename, '📄 ' + title);
+            if (!ok) await sendWA(from, '❌ ما قدرت أرسل الملف، جرب مرة ثانية');
           } else {
-            // fallback — أرسل رابط تنزيل PDF من Drive مباشرة
-            const fileIdMatch = link.match(/\/d\/([a-zA-Z0-9_-]+)/);
-            if (fileIdMatch) {
-              const pdfUrl = 'https://docs.google.com/document/d/' + fileIdMatch[1] + '/export?format=pdf';
-              const chatId = from.includes('@') ? from : from + '@c.us';
-              await axios.post(GA_URL + '/sendFileByUrl/' + GA_TOKEN, {
-                chatId, urlFile: pdfUrl, fileName: 'ملف.pdf', caption: '📄 ' + (st.lastGeneratedFile.title || 'ملف')
-              });
-            } else {
-              await sendWA(from, '❌ ما قدرت أحوّل الملف\n\n🔗 افتح الرابط وحمّله: ملف ← تنزيل ← PDF\n' + link);
-            }
+            await sendWA(from, '❌ ما قدرت أحوّل الملف من Drive');
           }
         } else {
-          // رابط Railway — افتحه في المتصفح وحمّله PDF
           await sendWA(from, '🖨️ افتح الرابط واضغط "طباعة" ثم "حفظ كـ PDF":\n\n🔗 ' + link);
         }
       } catch(e) {
         console.error('export_pdf error:', e.message);
-        await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0,80));
+        await sendWA(from, '❌ صار خطأ: ' + e.message.substring(0, 80));
       }
       break;
     }
