@@ -502,7 +502,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_tasks|done|postpone|delete|edit|search|busy|back|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_tasks|done|undo_done|postpone|postpone_all|delete|edit|search|busy|back|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -518,6 +518,7 @@ async function analyzeOwner(msg, context) {
     '- ارسل/أرسل لـ[شخص أو رقم] بعد X أو في تاريخ/وقت معين = scheduled_message (task_title=نص الرسالة فقط, target_name=المستقبل, date=التاريخ, time=الوقت)\n' +
     '- مهم جداً: لو الرسالة فيها "ارسل" + رقم هاتف = scheduled_message أو send_message — لا تضيفها كـ add_task أبداً\n' +
     '- مهم جداً: task_title في scheduled_message = نص الرسالة المراد إرسالها فقط (مثل "كيف حالك") وليس الأمر كاملاً\n' +
+    '- مهم جداً: "إرسال رسالة لـ جهة/شركة/مكتب" بدون رقم هاتف = add_task وليس send_message\n' +
     '- مشغول/في اجتماع = busy\n' +
     '- رجعت/خلصت = back\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
@@ -541,6 +542,9 @@ async function analyzeOwner(msg, context) {
     '- ابحث/وش هو/عرفني عن/وش تعرف عن = search (task_title = موضوع البحث)\n' +
     '- بعد X دقيقة/ساعة = احسب الوقت من ' + cur + '\n' +
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
+    '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks\n' +
+    '- أجّل/أجل كل المهام لبكرة/الغد = postpone_all\n' +
+    '- إلغاء إنجاز/ما انجزتها/رجّعها = undo_done\n' +
     '- مهم جداً: "ارسل رسالة في اجتماع" أو "ارسل لفلان" = send_message أو scheduled_message وليس add_meeting\n' +
     '- add_meeting فقط لو فيه طلب حقيقي لتحديد موعد لقاء\n' +
     '- كلام عادي/سؤال/مشكلة/أي شيء ثاني = chat\n' +
@@ -2428,18 +2432,22 @@ async function handleOwner(from, msg) {
       const type  = analysis.action==='add_meeting'?'meeting':analysis.action==='add_reminder'?'reminder':'task';
       const title = analysis.task_title || msg;
 
-      // تحقق لو المهمة موجودة مسبقاً
-      try {
-        const existing = await pool.query(
-          "SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",
-          ['%' + title.substring(0,10) + '%']
-        );
-        if (existing.rows.length > 0) {
-          const t = existing.rows[0];
-          await sendWA(from, 'أي، موجودة عندي — "' + t.title + '"' + (t.date?' يوم '+t.date:'') + (t.time?' الساعة '+fmt12(t.time):''));
-          break;
-        }
-      } catch(e) {}
+      // تحقق لو المهمة موجودة مسبقاً — فقط لو العنوان محدد وليس إرسال رسالة
+      const isMessageTask = title.match(/إرسال رسالة|ارسال رسالة|أرسل رسالة/);
+      if (!isMessageTask) {
+        try {
+          const matchStr = title.replace(/[أإآا]/g,'[أإآا]').substring(0,20);
+          const existing = await pool.query(
+            "SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",
+            ['%' + title.substring(0,20) + '%']
+          );
+          if (existing.rows.length > 0 && existing.rows[0].title.substring(0,15) === title.substring(0,15)) {
+            const t = existing.rows[0];
+            await sendWA(from, 'أي، موجودة عندي — "' + t.title + '"' + (t.date?' يوم '+t.date:'') + (t.time?' الساعة '+fmt12(t.time):''));
+            break;
+          }
+        } catch(e) {}
+      }
 
       if (analysis.date && analysis.time) {
         if (type === 'meeting') {
@@ -2455,6 +2463,38 @@ async function handleOwner(from, msg) {
         userState[from] = { step: 'waiting_datetime', taskTitle: title, taskType: type, taskNote: analysis.note||'' };
         await sendWA(from, '📌 *' + title + '*\n\n❓ متى وفي أي وقت؟');
       }
+      break;
+    }
+
+    case 'postpone_all': {
+      const tom = new Date(); tom.setDate(tom.getDate()+1);
+      const tomorrow = tom.getFullYear() + '-' + String(tom.getMonth()+1).padStart(2,'0') + '-' + String(tom.getDate()).padStart(2,'0');
+      const r = await pool.query("SELECT * FROM tasks WHERE done=false AND date<='" + tomorrow + "' ORDER BY date,time");
+      if (!r.rows.length) { await sendWA(from, '📋 ما في مهام معلقة'); break; }
+      for (const t of r.rows) {
+        await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tomorrow,t.id]);
+      }
+      await sendWA(from, '✅ تم تأجيل *' + r.rows.length + '* مهام لبكرة ' + tomorrow + ' 📅');
+      break;
+    }
+
+    case 'undo_done': {
+      // جيب آخر مهمة تم إنجازها
+      const r = await pool.query("SELECT * FROM tasks WHERE done=true ORDER BY created_at DESC LIMIT 5");
+      if (!r.rows.length) { await sendWA(from, '❓ ما في مهام منجزة أرجّعها'); break; }
+      if (r.rows.length === 1) {
+        await pool.query('UPDATE tasks SET done=false WHERE id=$1',[r.rows[0].id]);
+        await sendWA(from, '↩️ تم إرجاع *' + r.rows[0].title + '* لغير منجزة');
+        break;
+      }
+      let list = '↩️ *أي مهمة تبي ترجّعها؟*
+
+';
+      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*
+'; });
+      await sendWA(from, list + '
+أرسل الرقم');
+      userState[from] = { step: 'waiting_undo_selection', tasks: r.rows };
       break;
     }
 
@@ -2508,8 +2548,18 @@ async function handleOwner(from, msg) {
           break;
         } catch(e) {}
       }
-      const checkWords = ['سجلتها','سجلته','سجلتم','موجودة','موجود','ثبتتها','حطيتها','عندك','عندي','سبق'];
-      const isChecking = checkWords.some(function(w){ return msg.includes(w); });
+      const checkWords = ['سجلتها','سجلته','سجلتم','موجودة','موجود','ثبتتها','حطيتها','سبق'];
+      const checkWordsExact = ['عندك','عندي'];
+      // تحقق: الكلمة كاملة (مو جزء من كلمة أكبر) + الرسالة سؤال قصير (أقل من 30 حرف) + ما فيها كلمات إضافة
+      const addWords = ['ضيف','أضف','اضف','وايضا','وأيضا','سجل','ذكرني','اجتماع','مهمة'];
+      const hasAddWord = addWords.some(function(w){ return msg.includes(w); });
+      const isChecking = !hasAddWord && (
+        checkWords.some(function(w){ return msg.includes(w); }) ||
+        checkWordsExact.some(function(w){
+          const re = new RegExp('(^|\\s)' + w + '(\\s|$|؟|\\?)');
+          return re.test(msg) && msg.length < 40;
+        })
+      );
       if (isChecking) {
         // جيب آخر 5 مهام وسأل نواف يطابق
         try {
@@ -2741,6 +2791,17 @@ async function handleOwnerState(from, msg, state) {
       userState[from] = { step: 'idle', lastGeneratedFile: { title: fullRequest, link, request: fullRequest, type: 'html', fileId } };
       await sendWA(from, '📄 جاهز!\n\n🔗 ' + link + '\n\nافتحه في المتصفح ✨\nلو تبي تعدّل قولي');
     } catch(e) { await sendWA(from, '❌ صار خطأ، جرب مرة ثانية'); userState[from] = { step: 'idle' }; }
+    return;
+  }
+
+  if (state.step === 'waiting_undo_selection') {
+    const n = parseInt(msg);
+    if (n >= 1 && n <= state.tasks.length) {
+      await pool.query('UPDATE tasks SET done=false WHERE id=$1',[state.tasks[n-1].id]);
+      await sendWA(from, '↩️ تم إرجاع *' + state.tasks[n-1].title + '* لغير منجزة');
+      userState[from] = { step: 'idle' };
+    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
     return;
   }
 
