@@ -1328,13 +1328,18 @@ app.post('/webhook', async function(req, res) {
       }
     } else if (typeMsg === 'imageMessage' || md.imageMessageData) {
       const imgData = md.imageMessageData || {};
-      fileUrl  = imgData.downloadUrl || null;
-      fileType = 'jpeg';
-      msg      = imgData.caption || '';
-      if (!fileUrl && imgData.jpegThumbnail) {
+      msg = imgData.caption || '';
+      // جرب downloadUrl أولاً
+      if (imgData.downloadUrl) {
+        fileUrl = imgData.downloadUrl;
+        fileType = 'jpeg';
+      } else if (imgData.jpegThumbnail) {
+        // استخدم thumbnail مباشرة كـ base64
         fileUrl = 'data:image/jpeg;base64,' + imgData.jpegThumbnail;
+        fileType = 'jpeg';
+        console.log('🖼️ Using jpegThumbnail, length:', imgData.jpegThumbnail.length);
       }
-      console.log('🖼️ IMAGE URL:', fileUrl ? fileUrl.substring(0,80) : 'NULL', '| caption:', msg);
+      console.log('🖼️ IMAGE URL:', fileUrl ? fileUrl.substring(0,60) : 'NULL', '| caption:', msg);
     } else if (typeMsg === 'audioMessage' || typeMsg === 'voiceMessage' || md.audioMessageData || md.voiceMessageData) {
       const audioData = md.audioMessageData || md.voiceMessageData || {};
       console.log('🎤 AUDIO URL:', audioData.downloadUrl);
