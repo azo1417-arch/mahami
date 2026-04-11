@@ -517,7 +517,7 @@ async function analyzeOwner(msg, context) {
     '- رجعت/خلصت = back\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
     '- متى آخر/كم صار = recall\n' +
-    '- اضف [اسم] [معلومات] = add_relation\n' +
+    '- أضف جهة اتصال [اسم] [رقم] = add_contact (relation_name=الاسم, task_title=الرقم)\n' +
     '- وش عندي عن [اسم] = recall_relation\n' +
     '- اضف موعد متاح = add_slot\n' +
     '- وش مواعيدي المتاحة = show_slots\n' +
@@ -1754,19 +1754,32 @@ async function handleOwner(from, msg) {
       const msgToSend = analysis.task_title || analysis.message_to_send || msg;
       const targetName = analysis.target_name || '';
       let targetPhone = null;
-      if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
+
+      // لو الرسالة تحتوي رقم مباشر
+      const phoneMatch = msg.match(/(?:966|0)?5\d{8}/);
+      if (phoneMatch) {
+        targetPhone = phoneMatch[0].startsWith('966') ? phoneMatch[0] : '966' + phoneMatch[0].replace(/^0/,'');
+      } else if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
         targetPhone = WIFE_PHONE;
-      } else {
-        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1', ['%'+targetName+'%']);
+      } else if (targetName) {
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1',['%'+targetName+'%']);
         if (rel.rows.length) targetPhone = rel.rows[0].phone;
       }
-      if (!targetPhone) { await sendWA(from, '❓ ما عرفت رقم ' + targetName + '، أضفه بـ "أضف جهة اتصال"'); break; }
-      const sendAt = analysis.date && analysis.time
-        ? new Date(analysis.date + 'T' + analysis.time + ':00')
-        : new Date(Date.now() + 60000);
+
+      if (!targetPhone) { await sendWA(from, '❓ ما عرفت الرقم، أضفه بـ "أضف جهة اتصال [الاسم] [الرقم]"'); break; }
+
+      // احسب وقت الإرسال
+      let sendAt = new Date(Date.now() + 60000); // افتراضي بعد دقيقة
+      if (analysis.date && analysis.time) {
+        sendAt = new Date(analysis.date + 'T' + analysis.time + ':00');
+      } else if (analysis.time) {
+        sendAt = new Date(todayStr() + 'T' + analysis.time + ':00');
+      }
+
       await pool.query('INSERT INTO scheduled_messages (owner,target_phone,target_name,message,send_at) VALUES ($1,$2,$3,$4,$5)',
-        [from, targetPhone, targetName, msgToSend, sendAt]);
-      await sendWA(from, '✅ تمام! سأرسل لـ' + targetName + ' الساعة ' + fmt12(analysis.time||'') + (analysis.date?' يوم '+analysis.date:'') + '\n\nالرسالة: "' + msgToSend + '"');
+        [from, targetPhone, targetPhone, msgToSend, sendAt]);
+      const timeStr = analysis.time ? ' الساعة ' + fmt12(analysis.time) : ' بعد دقيقة';
+      await sendWA(from, '✅ تمام! سأرسل' + timeStr + (analysis.date?' يوم '+analysis.date:'') + ' للرقم ' + targetPhone + '\n\nالرسالة: "' + msgToSend + '"');
       break;
     }
 
@@ -1775,18 +1788,29 @@ async function handleOwner(from, msg) {
       if (!msgToSend) { await sendWA(from, '❓ وش الرسالة؟'); break; }
       let targetPhone = null;
       let targetName  = analysis.target_name || '';
-      if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
+
+      // لو في رقم مباشر في الرسالة
+      const phoneMatch2 = msg.match(/(?:966|0)?5\d{8}/);
+      if (phoneMatch2) {
+        targetPhone = phoneMatch2[0].startsWith('966') ? phoneMatch2[0] : '966' + phoneMatch2[0].replace(/^0/,'');
+        targetName = targetPhone;
+      } else if (targetName.includes('زوج') || targetName.includes('أريام') || targetName.includes('ريام')) {
         targetPhone = WIFE_PHONE; targetName = 'الزوجة';
-      } else {
-        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1', ['%'+targetName+'%']);
+      } else if (targetName) {
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1',['%'+targetName+'%']);
         if (rel.rows.length) { targetPhone = rel.rows[0].phone; }
         else {
           const last = await pool.query("SELECT * FROM tasks WHERE requested_by!='' AND status IN ('pending','awaiting_visitor_confirm') ORDER BY created_at DESC LIMIT 1");
           if (last.rows.length) { targetPhone = last.rows[0].requested_by; targetName = last.rows[0].requested_by_name; }
         }
       }
-      if (targetPhone) { await sendWA(targetPhone, msgToSend); await sendWA(from, '✅ تم الإرسال لـ ' + targetName); }
-      else { await sendWA(from, '❓ ما عرفت لمن أرسل'); }
+
+      if (targetPhone) {
+        await sendWA(targetPhone, msgToSend);
+        await sendWA(from, '✅ تم الإرسال لـ ' + targetName);
+      } else {
+        await sendWA(from, '❓ ما عرفت لمن أرسل، أضف الرقم بـ "أضف جهة اتصال [الاسم] [الرقم]"');
+      }
       break;
     }
 
@@ -1835,13 +1859,22 @@ async function handleOwner(from, msg) {
       break;
     }
 
+    case 'add_contact': {
+      const cName = analysis.relation_name || analysis.target_name || '';
+      const cPhone = (analysis.task_title || '').replace(/\s+/g,'').replace(/^\+/,'');
+      const phoneNum = cPhone.startsWith('966') ? cPhone : '966' + cPhone.replace(/^0/,'');
+      if (!cName || !cPhone) { await sendWA(from, '❓ أرسل: "أضف جهة اتصال [الاسم] [الرقم]"'); break; }
+      await pool.query('INSERT INTO special_contacts (phone,name,relation) VALUES ($1,$2,$3) ON CONFLICT (phone) DO UPDATE SET name=$2',[phoneNum,cName,'contact']);
+      await sendWA(from, '✅ تم حفظ ' + cName + ' — ' + phoneNum);
+      break;
+    }
+
     case 'add_relation': {
       const name = analysis.relation_name || analysis.target_name;
       const info = analysis.relation_info || analysis.task_title || '';
       if (name && info) {
         await pool.query('INSERT INTO relations (name,info) VALUES ($1,$2)',[name,info]);
         await rememberFact('relation_' + name, info);
-        // صامت - بدون إشعار
       } else if (name) {
         await rememberFact('relation_' + name, name);
       }
