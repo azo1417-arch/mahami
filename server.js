@@ -2033,8 +2033,7 @@ async function handleOwner(from, msg) {
         else if (temp <= 15) desc = 'برد 🧥';
         else desc = 'حق فرة وكوب قهوة ☕';
         let reply = '🌤️ الجو برا ' + desc + '\n';
-        reply += '🌡️ ' + data.temp + ' (تحس إنها ' + data.feels + ')\n';
-        reply += '💧 رطوبة: ' + data.humidity + ' | 💨 رياح: ' + data.wind;
+        reply += '🌡️ ' + data.temp + ' درجة الحرارة';
         await sendWA(from, reply);
       } else { await sendWA(from, 'ما قدرت أجيب الطقس، جرب بعدين'); }
       break;
@@ -2602,7 +2601,8 @@ async function handleOwnerState(from, msg, state) {
       await pool.query('UPDATE tasks SET done=true WHERE id=$1',[state.tasks[n-1].id]);
       await sendWA(from, '✅ *' + state.tasks[n-1].title + '* تم إنجازها 🎉');
       userState[from] = { step: 'idle' };
-    } else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
     return;
   }
 
@@ -2617,7 +2617,8 @@ async function handleOwnerState(from, msg, state) {
       await pool.query('UPDATE tasks SET time=$1,reminded=false WHERE id=$2',[nt,t.id]);
       await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لـ ' + fmt12(nt));
       userState[from] = { step: 'idle' };
-    } else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
     return;
   }
 
@@ -2627,7 +2628,8 @@ async function handleOwnerState(from, msg, state) {
       await pool.query('DELETE FROM tasks WHERE id=$1',[state.tasks[n-1].id]);
       await sendWA(from, '🗑️ تم حذف *' + state.tasks[n-1].title + '*');
       userState[from] = { step: 'idle' };
-    } else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
     return;
   }
 
@@ -2671,7 +2673,8 @@ async function handleOwnerState(from, msg, state) {
       const t = state.tasks[n-1];
       userState[from] = { step: 'waiting_edit_field', task: t };
       await sendWA(from, '✏️ *تعديل: ' + t.title + '*\n\n1. العنوان\n2. الوقت\n3. التاريخ\n4. الملاحظة' + (t.type==='meeting'?'\n5. الموقع':'') + '\n\nأرسل الرقم');
-    } else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
     return;
   }
 
@@ -2682,7 +2685,11 @@ async function handleOwnerState(from, msg, state) {
     if (fields[n]) {
       userState[from] = { step: 'waiting_edit_value', task: state.task, field: fields[n] };
       await sendWA(from, '✏️ أرسل ' + labels[n] + ':');
-    } else { await sendWA(from, '❓ أرسل رقم صحيح'); }
+    } else if (isNaN(n) && msg.trim().length > 0) {
+      // نص بدون رقم = المستخدم يبغى يخرج أو طلب جديد
+      userState[from] = { step: 'idle' };
+      await handleOwner(from, msg);
+    } else { await sendWA(from, '❓ أرسل رقم من 1 إلى 5'); }
     return;
   }
 
@@ -2711,7 +2718,12 @@ async function handleOwnerState(from, msg, state) {
       else { await sendWA(from, '❓ ما فهمت التاريخ'); return; }
     }
     await pool.query('UPDATE tasks SET ' + field + '=$1 WHERE id=$2',[nv,t.id]);
-    await sendWA(from, '✅ تم التعديل!\n📌 ' + t.title + (field==='time'?' — الساعة '+fmt12(nv):''));
+    const displayTitle = field === 'title' ? nv : t.title;
+    let confirmMsg = '✅ تم التعديل!\n📌 ' + displayTitle;
+    if (field === 'time') confirmMsg += ' — الساعة ' + fmt12(nv);
+    else if (field === 'date') confirmMsg += '\n📅 ' + nv;
+    else if (field === 'title') confirmMsg += ' ✏️';
+    await sendWA(from, confirmMsg);
     userState[from] = { step: 'idle' }; return;
   }
 
