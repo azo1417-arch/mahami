@@ -2020,9 +2020,7 @@ async function handleOwner(from, msg) {
 
     case 'edit_file': {
       let st2 = userState[from] || {};
-      if (!st2.lastGeneratedFile) {
-        st2.lastGeneratedFile = await getLastFile(from);
-      }
+      if (!st2.lastGeneratedFile) st2.lastGeneratedFile = await getLastFile(from);
       if (!st2.lastGeneratedFile) { await sendWA(from, 'ما عندي ملف سابق أعدّل عليه'); break; }
       const editReq = analysis.task_title || msg;
       await sendWA(from, '⏳ أعدّل...');
@@ -2031,13 +2029,32 @@ async function handleOwner(from, msg) {
         const combined = st2.lastGeneratedFile.request + ' — تعديل: ' + editReq;
         const htmlContent = await buildHtmlFile(combined, prof2);
         if (!htmlContent) { await sendWA(from, 'ما قدرت أعدّل، وضّح أكثر'); break; }
-        const fileId = 'f' + Date.now();
-        await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, combined, htmlContent]);
-        const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
-        const link2 = baseUrl + '/f/' + fileId;
-        userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: Object.assign({}, st2.lastGeneratedFile, { request: combined, link: link2, fileId }) });
-        await sendWA(from, '✅ تم التعديل!\n\n🔗 ' + link2);
-      } catch(e) { await sendWA(from, '❌ صار خطأ في التعديل'); }
+
+        const isTable  = combined.match(/جدول|اكسل|sheet|بيانات|متابعة|أعمدة|عمود/i);
+        const isSurvey = combined.match(/استبيان|نموذج|فورم/i);
+        const driveType = isTable ? 'sheet' : isSurvey ? null : 'doc';
+
+        let finalLink = null;
+        if (driveType) finalLink = await saveFileToDrive(combined, htmlContent, driveType);
+
+        if (finalLink) {
+          // حفظ في DB مع drive_link
+          const fileId = 'f' + Date.now();
+          await pool.query('INSERT INTO html_files (id,owner,title,content,drive_link) VALUES ($1,$2,$3,$4,$5)',
+            [fileId, from, combined, htmlContent, finalLink]).catch(()=>{});
+          userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: combined, link: finalLink, request: combined, type: driveType, fileId } });
+          const icon = isTable ? '📊' : '📝';
+          await sendWA(from, icon + ' تم التعديل!\n\n🔗 ' + finalLink + '\n\nلو تبي تحوّله PDF قول "حوّله PDF"');
+        } else {
+          // fallback — حفظ في DB
+          const fileId = 'f' + Date.now();
+          await pool.query('INSERT INTO html_files (id,owner,title,content) VALUES ($1,$2,$3,$4)', [fileId, from, combined, htmlContent]);
+          const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://mahami-production.up.railway.app';
+          const link2 = baseUrl + '/f/' + fileId;
+          userState[from] = Object.assign(userState[from]||{}, { lastGeneratedFile: { title: combined, link: link2, request: combined, type: 'html', fileId } });
+          await sendWA(from, '✅ تم التعديل!\n\n🔗 ' + link2);
+        }
+      } catch(e) { await sendWA(from, '❌ صار خطأ في التعديل: ' + e.message.substring(0,80)); }
       break;
     }
 
