@@ -2167,9 +2167,29 @@ async function handleOwner(from, msg) {
     }
 
     case 'show_permissions': {
-      const perms = await getPermsStatus(null);
-      await sendWA(from, buildPermsMsg(perms, ''));
-      userState[from] = Object.assign(userState[from]||{}, { step: 'waiting_perm_toggle', permTarget: 'all', permTargetLabel: '' });
+      const target = msg.includes('معي') || msg.includes('عندي') ? 'owner' : 'visitor';
+      if (target === 'owner') {
+        await sendWA(from,
+          '⚙️ *صلاحياتي معك:*\n\n' +
+          '✅ إنشاء الملفات (جداول، تقارير، استبيانات)\n' +
+          '✅ تحويل وإرسال PDF\n' +
+          '✅ البحث في الإنترنت\n' +
+          '✅ الطقس والعملات والذهب\n' +
+          '✅ تسجيل المهام والاجتماعات والتذكيرات\n' +
+          '✅ الرسائل المجدولة\n' +
+          '✅ التذكيرات اليومية\n' +
+          '✅ قراءة الصور والـ PDF\n' +
+          '✅ الرسائل الصوتية\n' +
+          '✅ الذاكرة وحفظ المعلومات\n' +
+          '✅ المواعيد المتاحة\n' +
+          '✅ خرائط ومسافات\n\n' +
+          'هذي الصلاحيات دائماً مفعّلة معك 😊'
+        );
+      } else {
+        const perms = await getPermsStatus(null);
+        await sendWA(from, buildPermsMsg(perms, ''));
+        userState[from] = Object.assign(userState[from]||{}, { step: 'waiting_perm_toggle', permTarget: 'all', permTargetLabel: '' });
+      }
       break;
     }
 
