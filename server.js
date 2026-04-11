@@ -1353,11 +1353,12 @@ app.post('/webhook', async function(req, res) {
       }
       console.log('🖼️ IMAGE URL:', fileUrl ? fileUrl.substring(0,60) : 'NULL', '| caption:', msg);
     } else if (typeMsg === 'audioMessage' || typeMsg === 'voiceMessage' || md.audioMessageData || md.voiceMessageData) {
-      const audioData = md.audioMessageData || md.voiceMessageData || {};
-      console.log('🎤 AUDIO URL:', audioData.downloadUrl);
+      const audioData = md.audioMessageData || md.voiceMessageData || md.fileMessageData || {};
+      const audioUrl = audioData.downloadUrl || (md.fileMessageData && md.fileMessageData.downloadUrl) || null;
+      console.log('🎤 AUDIO URL:', audioUrl);
       msg = '__audio__';
       fileType = 'audio';
-      fileUrl = audioData.downloadUrl || null;
+      fileUrl = audioUrl;
     } else if (typeMsg === 'documentMessage' || md.documentMessageData) {
       const docData = md.documentMessageData || {};
       fileUrl  = docData.downloadUrl;
