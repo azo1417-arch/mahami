@@ -118,8 +118,16 @@ async function initDB() {
     "content TEXT NOT NULL, " +
     "created_at TIMESTAMP DEFAULT NOW())"
   );
-  // حفظ آخر ملف لكل مستخدم
   await pool.query("ALTER TABLE html_files ADD COLUMN IF NOT EXISTS drive_link TEXT").catch(()=>{});
+
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS permissions (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "permission TEXT NOT NULL, " +
+    "target TEXT NOT NULL DEFAULT 'all', " +
+    "enabled BOOLEAN DEFAULT TRUE, " +
+    "UNIQUE(permission, target))"
+  );
 
   await pool.query(
     "CREATE TABLE IF NOT EXISTS scheduled_messages (" +
@@ -157,6 +165,56 @@ const sentReminders = new Set();
 const userState = {};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
+// ─── نظام الصلاحيات ──────────────────────────────────────────────────────
+const ALL_PERMISSIONS = [
+  { key: 'files',     label: '📄 إنشاء الملفات (جداول، تقارير)' },
+  { key: 'pdf',       label: '🖨️ تحويل وإرسال PDF' },
+  { key: 'search',    label: '🔍 البحث في الإنترنت' },
+  { key: 'weather',   label: '🌤️ الطقس والعملات والذهب' },
+  { key: 'tasks',     label: '📋 قبول طلبات الزوار' },
+  { key: 'meetings',  label: '📅 حجز الاجتماعات' },
+  { key: 'reminders', label: '🔔 تذكيرات الزوار' },
+  { key: 'chat',      label: '💬 المحادثة مع الزوار' },
+  { key: 'voice',     label: '🎤 الرسائل الصوتية' },
+  { key: 'images',    label: '🖼️ قراءة الصور والملفات' },
+  { key: 'wife',      label: '💌 التواصل مع الزوجة' },
+];
+
+async function isPermEnabled(permKey, targetPhone) {
+  try {
+    if (targetPhone) {
+      const r = await pool.query('SELECT enabled FROM permissions WHERE permission=$1 AND target=$2',[permKey,targetPhone]);
+      if (r.rows.length) return r.rows[0].enabled;
+    }
+    const r = await pool.query('SELECT enabled FROM permissions WHERE permission=$1 AND target=$2',[permKey,'all']);
+    if (r.rows.length) return r.rows[0].enabled;
+    return true;
+  } catch(e) { return true; }
+}
+
+async function setPerm(permKey, enabled, target) {
+  const t = target || 'all';
+  await pool.query('INSERT INTO permissions (permission,target,enabled) VALUES ($1,$2,$3) ON CONFLICT (permission,target) DO UPDATE SET enabled=$3',[permKey,t,enabled]);
+}
+
+async function getPermsStatus(targetPhone) {
+  const result = [];
+  for (const p of ALL_PERMISSIONS) {
+    const enabled = await isPermEnabled(p.key, targetPhone);
+    result.push(Object.assign({}, p, { enabled }));
+  }
+  return result;
+}
+
+function buildPermsMsg(perms, targetLabel) {
+  let msg = '⚙️ *صلاحيات نواف*' + (targetLabel ? ' مع ' + targetLabel : '') + ':\n\n';
+  perms.forEach(function(p, i) {
+    msg += (i+1) + '. ' + p.label + ' — ' + (p.enabled ? '✅' : '❌') + '\n';
+  });
+  msg += '\nأرسل رقم الصلاحية لتبديلها\nأو "وقف الكل" / "شغّل الكل"';
+  return msg;
+}
+
 async function sendWA(to, message) {
   try {
     const chatId = to.includes('@') ? to : to + '@c.us';
@@ -457,7 +515,8 @@ async function analyzeOwner(msg, context) {
     '- سوّ/اعمل/ابن جدول أو ملف أو تقرير أو خطة = create_file (task_title=وصف الطلب)\n' +
     '- عدّل/غيّر في الملف = edit_file (task_title=التعديل المطلوب)\n' +
     '- أرسلني الملف PDF/بي دي اف/صدّره PDF = export_pdf\n' +
-    '- وش تعرف عني/ملفي/معلوماتي = show_profile\n' +
+    '- وش صلاحياتك/صلاحيات نواف = show_permissions\n' +
+    '- وقف/شغّل صلاحية [رقم أو اسم] = set_permission (task_title=الرقم أو الاسم, note=وقف أو شغّل)\n' +
     '- الجو/الطقس/حرارة/بارد/حار = weather (task_title = اسم المدينة لو ذكرت)\n' +
     '- سعر الدولار/العملات/الريال/صرف = currency\n' +
     '- سعر الذهب = gold\n' +
@@ -2076,6 +2135,43 @@ async function handleOwner(from, msg) {
       break;
     }
 
+    case 'show_permissions': {
+      const perms = await getPermsStatus(null);
+      await sendWA(from, buildPermsMsg(perms, ''));
+      userState[from] = Object.assign(userState[from]||{}, { step: 'waiting_perm_toggle', permTarget: 'all', permTargetLabel: '' });
+      break;
+    }
+
+    case 'set_permission': {
+      const input = (analysis.task_title || msg).trim();
+      const isEnable = msg.includes('شغّل') || msg.includes('شغل') || msg.includes('فعّل') || msg.includes('فعل');
+      const isDisable = msg.includes('وقف') || msg.includes('أوقف') || msg.includes('اوقف');
+      const targetName = analysis.target_name || null;
+      let targetPhone = null;
+      if (targetName) {
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1',['%'+targetName+'%']);
+        if (rel.rows.length) targetPhone = rel.rows[0].phone;
+      }
+      // لو "وقف الكل" أو "شغّل الكل"
+      if (msg.includes('الكل') || msg.includes('كل شي')) {
+        for (const p of ALL_PERMISSIONS) await setPerm(p.key, isEnable, targetPhone||'all');
+        await sendWA(from, (isEnable?'✅ شغّلت':'❌ وقّفت') + ' كل الصلاحيات' + (targetName?' مع '+targetName:''));
+        break;
+      }
+      // رقم محدد
+      const n = parseInt(input);
+      if (n >= 1 && n <= ALL_PERMISSIONS.length) {
+        const p = ALL_PERMISSIONS[n-1];
+        await setPerm(p.key, isEnable, targetPhone||'all');
+        await sendWA(from, (isEnable?'✅ شغّلت':'❌ وقّفت') + ' ' + p.label + (targetName?' مع '+targetName:''));
+      } else {
+        const perms = await getPermsStatus(null);
+        await sendWA(from, buildPermsMsg(perms, ''));
+        userState[from] = Object.assign(userState[from]||{}, { step: 'waiting_perm_toggle', permTarget: targetPhone||'all', permTargetLabel: targetName||'' });
+      }
+      break;
+    }
+
     case 'show_profile': {
       const profile3 = await getProfile();
       if (!profile3) { await sendWA(from, 'ما عندي معلومات عنك بعد، بتعلم منك مع الوقت'); break; }
@@ -2354,6 +2450,40 @@ async function handleOwnerState(from, msg, state) {
       await sendWA(from, '🗑️ تم حذف *' + state.tasks[n-1].title + '*');
       userState[from] = { step: 'idle' };
     } else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    return;
+  }
+
+  if (state.step === 'waiting_perm_toggle') {
+    const input = msg.trim();
+    const target = state.permTarget || 'all';
+    const targetLabel = state.permTargetLabel || '';
+    // وقف الكل / شغّل الكل
+    if (input.includes('وقف الكل') || input.includes('وقف كل')) {
+      for (const p of ALL_PERMISSIONS) await setPerm(p.key, false, target);
+      await sendWA(from, '❌ وقّفت كل الصلاحيات' + (targetLabel?' مع '+targetLabel:''));
+      userState[from] = { step: 'idle' }; return;
+    }
+    if (input.includes('شغّل الكل') || input.includes('شغل الكل') || input.includes('شغّل كل')) {
+      for (const p of ALL_PERMISSIONS) await setPerm(p.key, true, target);
+      await sendWA(from, '✅ شغّلت كل الصلاحيات' + (targetLabel?' مع '+targetLabel:''));
+      userState[from] = { step: 'idle' }; return;
+    }
+    const n = parseInt(input);
+    if (n >= 1 && n <= ALL_PERMISSIONS.length) {
+      const p = ALL_PERMISSIONS[n-1];
+      const current = await isPermEnabled(p.key, target === 'all' ? null : target);
+      const newVal = !current;
+      await setPerm(p.key, newVal, target);
+      await sendWA(from, (newVal?'✅ شغّلت':'❌ وقّفت') + ' ' + p.label + (targetLabel?' مع '+targetLabel:''));
+      // أرسل القائمة محدّثة
+      const perms = await getPermsStatus(target === 'all' ? null : target);
+      await sendWA(from, buildPermsMsg(perms, targetLabel));
+      return;
+    }
+    if (input === 'خلاص' || input === 'تمام' || input === 'وقف') {
+      userState[from] = { step: 'idle' }; return;
+    }
+    await sendWA(from, '❓ أرسل رقم من 1 إلى ' + ALL_PERMISSIONS.length + ' أو "خلاص"');
     return;
   }
 
@@ -2701,6 +2831,11 @@ async function handleVisitor(from, msg) {
 
   // task_request
   if (analysis.intent === 'task_request') {
+    if (!await isPermEnabled('tasks', from)) {
+      const reply = await nawafVisitorReply(visitorName||'الزائر', msg, state.history);
+      if (reply) await sendWA(from, reply);
+      return;
+    }
     if (analysis.task_title) {
       userState[from] = { step: 'waiting_visitor_time', requestType: 'task', requestTitle: analysis.task_title, history: state.history, visitorName };
       await sendWA(from, '📌 فاهم الطلب: "' + analysis.task_title + '"\n\n📅 متى تبغى يكون؟ وش التاريخ والوقت المناسب؟');
@@ -2713,6 +2848,11 @@ async function handleVisitor(from, msg) {
 
   // meeting_request
   if (analysis.intent === 'meeting_request') {
+    if (!await isPermEnabled('meetings', from)) {
+      const reply = await nawafVisitorReply(visitorName||'الزائر', msg, state.history);
+      if (reply) await sendWA(from, reply);
+      return;
+    }
     const slots = await pool.query('SELECT * FROM available_slots WHERE slot_date>=$1 AND is_booked=false ORDER BY slot_date,slot_time LIMIT 5',[todayStr()]).catch(function() { return {rows:[]}; });
     if (slots.rows.length) {
       let sm = '📅 الأوقات المتاحة لعبدالعزيز:\n\n';
