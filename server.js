@@ -257,25 +257,41 @@ async function sendWAPdfFromBuffer(to, pdfBuffer, filename, caption) {
   }
 }
 
+async function getFileUrl(msgUrl) {
+  // لو data URL — أرجعه مباشرة
+  if (!msgUrl || msgUrl.startsWith('data:')) return msgUrl;
+  // جرب تحميل مباشر أولاً
+  try {
+    const r = await axios.get(msgUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    if (r.data && r.data.byteLength > 0) return msgUrl;
+  } catch(e) {}
+  // جرب Green API getFileDownloadUrl
+  try {
+    const r = await axios.get(GA_URL + '/getFileDownloadUrl/' + GA_TOKEN + '?url=' + encodeURIComponent(msgUrl), { timeout: 15000 });
+    if (r.data && r.data.downloadUrl) return r.data.downloadUrl;
+  } catch(e) { console.log('getFileDownloadUrl failed:', e.message); }
+  return msgUrl;
+}
+
 async function transcribeAudio(audioUrl) {
   try {
     const OPENAI_KEY = process.env.OPENAI_API_KEY;
     if (!OPENAI_KEY) return null;
 
-    // حمّل ملف الصوت
+    // حسّن الرابط
+    const resolvedUrl = await getFileUrl(audioUrl);
+    console.log('🎤 Resolved audio URL:', resolvedUrl ? resolvedUrl.substring(0,80) : 'NULL');
+    if (!resolvedUrl) return null;
+
     let audioBuffer;
     try {
-      const r = await axios.get(audioUrl, {
-        responseType: 'arraybuffer', timeout: 30000,
-        headers: { 'Authorization': 'Bearer ' + GA_TOKEN }
-      });
+      const r = await axios.get(resolvedUrl, { responseType: 'arraybuffer', timeout: 30000 });
       audioBuffer = r.data;
     } catch(e) {
-      const r = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 30000 });
-      audioBuffer = r.data;
+      console.error('Audio download failed:', e.message);
+      return null;
     }
 
-    // أرسل لـ Whisper API
     const FormData = require('form-data');
     const form = new FormData();
     form.append('file', Buffer.from(audioBuffer), { filename: 'audio.ogg', contentType: 'audio/ogg' });
@@ -1472,42 +1488,15 @@ async function handleOwnerFile(from, fileUrl, fileType, caption) {
     if (fileUrl && fileUrl.startsWith('data:')) {
       base64 = fileUrl.split(',')[1];
     } else {
-      // تحميل من Green API — جرب طرق متعددة
+      // جرب تحسين الرابط أولاً
+      const resolvedUrl = await getFileUrl(fileUrl);
+      console.log('📎 Resolved file URL:', resolvedUrl ? resolvedUrl.substring(0,80) : 'NULL');
       let responseData;
-      const downloadAttempts = [
-        // محاولة 1: Green API download endpoint
-        async () => {
-          const GA_URL_BASE = 'https://api.green-api.com/waInstance' + process.env.GA_INSTANCE;
-          const r = await axios.post(GA_URL_BASE + '/downloadFile/' + GA_TOKEN,
-            { chatId: from.includes('@') ? from : from + '@c.us', idMessage: '' },
-            { timeout: 20000 }
-          );
-          return r.data;
-        },
-        // محاولة 2: مباشر مع Authorization
-        async () => {
-          const r = await axios.get(fileUrl, {
-            responseType: 'arraybuffer', timeout: 20000,
-            headers: { 'Authorization': 'Bearer ' + GA_TOKEN }
-          });
-          return r.data;
-        },
-        // محاولة 3: مباشر بدون Authorization
-        async () => {
-          const r = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
-          return r.data;
-        }
-      ];
-
-      for (const attempt of downloadAttempts) {
-        try {
-          responseData = await attempt();
-          if (responseData) break;
-        } catch(e) { console.log('Download attempt failed:', e.message); }
-      }
-
-      if (!responseData) {
-        console.error('All download attempts failed for:', fileUrl);
+      try {
+        const r = await axios.get(resolvedUrl, { responseType: 'arraybuffer', timeout: 30000 });
+        responseData = r.data;
+      } catch(e) {
+        console.error('File download failed:', e.message);
         await sendWA(from, '❌ ما قدرت أحمل الملف. جرب تعيد إرساله');
         return;
       }
