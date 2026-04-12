@@ -1426,46 +1426,31 @@ cron.schedule('0 9 * * *', async function() {
       pool.query("SELECT * FROM tasks WHERE done=true AND DATE(created_at AT TIME ZONE 'Asia/Riyadh') = $1 ORDER BY created_at DESC",[today])
     ]);
 
-    let msg = '🌅 *صباح الخير عبدالعزيز!*
-';
-    msg += '📅 ' + new Date().toLocaleDateString('ar-SA',{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone:'Asia/Riyadh'}) + '
-';
-    msg += '─────────────
-
-';
+    let msg = '🌅 *صباح الخير عبدالعزيز!*\n';
+    msg += '📅 ' + new Date().toLocaleDateString('ar-SA',{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone:'Asia/Riyadh'}) + '\n';
+    msg += '─────────────\n\n';
 
     if (overdue.rows.length) {
-      msg += '⚠️ *متأخرة (' + overdue.rows.length + '):*
-';
-      overdue.rows.forEach(function(t){ msg += '🔹 *' + t.title + '* — ' + t.date + '
-'; });
-      msg += '
-';
+      msg += '⚠️ *متأخرة (' + overdue.rows.length + '):*\n';
+      overdue.rows.forEach(function(t){ msg += '🔹 *' + t.title + '* — ' + t.date + '\n'; });
+      msg += '\n';
     }
 
     if (todayTasks.rows.length) {
-      msg += '📌 *مهام اليوم (' + todayTasks.rows.length + '):*
-';
+      msg += '📌 *مهام اليوم (' + todayTasks.rows.length + '):*\n';
       todayTasks.rows.forEach(function(t){
         const ic = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹';
-        msg += ic + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '
-';
+        msg += ic + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n';
       });
-      msg += '
-';
+      msg += '\n';
     } else {
-      msg += '📌 *مهام اليوم:* ما في مهام مجدولة
-
-';
+      msg += '📌 *مهام اليوم:* ما في مهام مجدولة\n\n';
     }
 
     if (pendingReq.rows.length) {
-      msg += '📬 *طلبات معلقة (' + pendingReq.rows.length + '):*
-';
-      pendingReq.rows.forEach(function(t){ msg += '👤 ' + t.requested_by_name + ': ' + t.title + '
-'; });
-      msg += '
-';
+      msg += '📬 *طلبات معلقة (' + pendingReq.rows.length + '):*\n';
+      pendingReq.rows.forEach(function(t){ msg += '👤 ' + t.requested_by_name + ': ' + t.title + '\n'; });
+      msg += '\n';
     }
 
     msg += '';
@@ -1490,56 +1475,35 @@ cron.schedule('0 19 * * 4', async function() {
     const total = doneW.rows.length + pendingAll.rows.length + overdueAll.rows.length;
     const pct = total > 0 ? Math.round(doneW.rows.length / total * 100) : 0;
 
-    let msg = '📊 *تقرير الأسبوع*
-';
-    msg += '📅 ' + wa + ' ← ' + today + '
-';
-    msg += '─────────────
+    let msg = '📊 *تقرير الأسبوع*\n';
+    msg += '📅 ' + wa + ' ← ' + today + '\n';
+    msg += '─────────────\n\n';
 
-';
-
-    msg += '✅ *منجزة (' + doneW.rows.length + '):*
-';
+    msg += '✅ *منجزة (' + doneW.rows.length + '):*\n';
     if (doneW.rows.length) {
-      doneW.rows.slice(0,8).forEach(function(t){ msg += '  ~' + t.title + '~
-'; });
-      if (doneW.rows.length > 8) msg += '  و' + (doneW.rows.length-8) + ' أخرى...
-';
-    } else { msg += '  لا يوجد
-'; }
-    msg += '
-';
+      doneW.rows.slice(0,8).forEach(function(t){ msg += '  ~' + t.title + '~\n'; });
+      if (doneW.rows.length > 8) msg += '  و' + (doneW.rows.length-8) + ' أخرى...\n';
+    } else { msg += '  لا يوجد\n'; }
+    msg += '\n';
 
     if (overdueAll.rows.length) {
-      msg += '⚠️ *متأخرة (' + overdueAll.rows.length + '):*
-';
-      overdueAll.rows.forEach(function(t){ msg += '  🔹 ' + t.title + ' — ' + t.date + '
-'; });
-      msg += '
-';
+      msg += '⚠️ *متأخرة (' + overdueAll.rows.length + '):*\n';
+      overdueAll.rows.forEach(function(t){ msg += '  🔹 ' + t.title + ' — ' + t.date + '\n'; });
+      msg += '\n';
     }
 
     if (pendingAll.rows.length) {
-      msg += '🗓️ *معلقة (' + pendingAll.rows.length + '):*
-';
-      pendingAll.rows.slice(0,5).forEach(function(t){ msg += '  🔹 ' + t.title + (t.date?' — '+t.date:'') + '
-'; });
-      if (pendingAll.rows.length > 5) msg += '  و' + (pendingAll.rows.length-5) + ' أخرى...
-';
-      msg += '
-';
+      msg += '🗓️ *معلقة (' + pendingAll.rows.length + '):*\n';
+      pendingAll.rows.slice(0,5).forEach(function(t){ msg += '  🔹 ' + t.title + (t.date?' — '+t.date:'') + '\n'; });
+      if (pendingAll.rows.length > 5) msg += '  و' + (pendingAll.rows.length-5) + ' أخرى...\n';
+      msg += '\n';
     }
 
-    msg += '─────────────
-';
-    msg += '📈 نسبة الإنجاز: *' + pct + '%*
-';
-    msg += '👤 زوار جدد: *' + visitors.rows[0].count + '*
-';
-    msg += '📬 طلبات زوار: *' + visitorReqs.rows[0].count + '*
-';
-    msg += '
-';
+    msg += '─────────────\n';
+    msg += '📈 نسبة الإنجاز: *' + pct + '%*\n';
+    msg += '👤 زوار جدد: *' + visitors.rows[0].count + '*\n';
+    msg += '📬 طلبات زوار: *' + visitorReqs.rows[0].count + '*\n';
+    msg += '\n';
     await sendWA(PHONE, msg);
     // تعلم أسبوعي شامل في الخلفية
     const recent = await pool.query("SELECT * FROM tasks WHERE requested_by!='' AND created_at>=$1 ORDER BY created_at DESC LIMIT 30",[wa]);
@@ -1949,30 +1913,20 @@ async function buildTasksList(includeTitle) {
   if (!all.length) return { text: '📋 ما عندك مهام معلقة ✅', tasks: [], count: 0 };
   const ic = function(t){ return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹'; };
   let i = 0;
-  let txt = includeTitle ? '📋 *مهامك:*
-
-' : '';
+  let txt = includeTitle ? '📋 *مهامك:*\n\n' : '';
   if (overdueR.rows.length) {
-    txt += '⚠️ *متأخرة (' + overdueR.rows.length + '):*
-';
-    overdueR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '* — ' + t.date + '
-'; });
-    txt += '
-';
+    txt += '⚠️ *متأخرة (' + overdueR.rows.length + '):*\n';
+    overdueR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '* — ' + t.date + '\n'; });
+    txt += '\n';
   }
   if (todayR.rows.length) {
-    txt += '📌 *اليوم (' + todayR.rows.length + '):*
-';
-    todayR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '
-'; });
-    txt += '
-';
+    txt += '📌 *اليوم (' + todayR.rows.length + '):*\n';
+    todayR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+    txt += '\n';
   }
   if (upcomingR.rows.length) {
-    txt += '🗓️ *القادمة (' + upcomingR.rows.length + '):*
-';
-    upcomingR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '* — ' + (t.date||'بدون تاريخ') + '
-'; });
+    txt += '🗓️ *القادمة (' + upcomingR.rows.length + '):*\n';
+    upcomingR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '* — ' + (t.date||'بدون تاريخ') + '\n'; });
   }
   return { text: txt.trim(), tasks: all, count: all.length };
 }
@@ -2689,9 +2643,7 @@ async function handleOwner(from, msg) {
         await pool.query('UPDATE tasks SET done=true WHERE id=$1',[tl.tasks[0].id]);
         await sendWA(from, '✅ *' + tl.tasks[0].title + '* تم إنجازها 🎉'); break;
       }
-      await sendWA(from, tl.text + '
-
-✅ أرسل رقم المهمة أو *الكل*');
+      await sendWA(from, tl.text + '\n\n✅ أرسل رقم المهمة أو *الكل*');
       userState[from] = { step: 'waiting_done_selection', tasks: tl.tasks };
       break;
     }
@@ -2705,9 +2657,7 @@ async function handleOwner(from, msg) {
         await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tom0Str,tl.tasks[0].id]);
         await sendWA(from, '⏰ تم تأجيل *' + tl.tasks[0].title + '* لبكرة'); break;
       }
-      await sendWA(from, tl.text + '
-
-⏰ أرسل رقم المهمة أو *الكل* لتأجيل كل شيء لبكرة');
+      await sendWA(from, tl.text + '\n\n⏰ أرسل رقم المهمة أو *الكل* لتأجيل كل شيء لبكرة');
       userState[from] = { step: 'waiting_postpone_selection', tasks: tl.tasks };
       break;
     }
@@ -2719,9 +2669,7 @@ async function handleOwner(from, msg) {
         await pool.query('DELETE FROM tasks WHERE id=$1',[tl.tasks[0].id]);
         await sendWA(from, '🗑️ تم حذف *' + tl.tasks[0].title + '*'); break;
       }
-      await sendWA(from, tl.text + '
-
-🗑️ أرسل رقم المهمة أو *الكل* لحذف كل شيء');
+      await sendWA(from, tl.text + '\n\n🗑️ أرسل رقم المهمة أو *الكل* لحذف كل شيء');
       userState[from] = { step: 'waiting_delete_selection', tasks: tl.tasks };
       break;
     }
@@ -2859,13 +2807,9 @@ async function handleOwner(from, msg) {
         await sendWA(from, '↩️ تم إرجاع *' + r.rows[0].title + '* لغير منجزة');
         break;
       }
-      let list = '↩️ *أي مهمة تبي ترجّعها؟*
-
-';
-      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*
-'; });
-      await sendWA(from, list + '
-أرسل الرقم');
+      let list = '↩️ *أي مهمة تبي ترجّعها؟*\n\n';
+      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*\n'; });
+      await sendWA(from, list + '\nأرسل الرقم');
       userState[from] = { step: 'waiting_undo_selection', tasks: r.rows };
       break;
     }
