@@ -182,6 +182,15 @@ async function initDB() {
     "note TEXT, location TEXT, done BOOLEAN, " +
     "deleted_at TIMESTAMP DEFAULT NOW())"
   );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS occasions (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "title TEXT NOT NULL, " +
+    "occasion_date TEXT NOT NULL, " +
+    "type TEXT DEFAULT 'other', " +
+    "remind_days INTEGER DEFAULT 1, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
   console.log('✅ DB جاهزة');
 }
 initDB();
@@ -560,7 +569,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|add_note|stats|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|add_note|stats|focus_mode|end_focus|add_occasion|show_occasions|share_task|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -582,6 +591,10 @@ async function analyzeOwner(msg, context) {
     '- الغ الإجازة/ألغِ الإجازة = cancel_vacation\n' +
     '- وش عندك متعلقات/وش المجمد/وش جاء بالإجازة = show_vacation_msgs\n' +
     '- نكمل بعدين/خلها بعدين/بعدين/خلاص خلها/خلها لما أرجع/نكمل لاحقاً = show_vacation_msgs\n' +
+    '- وضع التركيز/أنا في اجتماع/لا إشعارات/بدون إزعاج لمدة X = focus_mode (time=مدة بالدقائق)\n' +
+    '- خلصت التركيز/رجعت/انتهى الاجتماع الحين = end_focus\n' +
+    '- أضف مناسبة/ذكرى/عيد ميلاد = add_occasion (task_title=الاسم, date=التاريخ, note=نوع المناسبة)\n' +
+    '- وش مناسباتي/المناسبات القادمة = show_occasions\n' +
     '- رجعت/خلصت = back\n' +
     '- رجعت من الإجازة/انهِ الإجازة/أنهِ الإجازة = back_from_vacation\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
@@ -614,6 +627,7 @@ async function analyzeOwner(msg, context) {
     '- أضف ملاحظة على/علّق على = add_note (task_title=اسم المهمة, note=نص الملاحظة)\n' +
     '- خلّها عاجل/أولوية عاجلة/مهمة جداً = set_priority (task_title=اسم المهمة, note=urgent)\n' +
     '- إحصائياتي/كم أنجزت/تقريري/وش أنجزت = stats\n' +
+    '- شارك مهمة/أرسل مهمة لـ/وزّع على = share_task (task_title=اسم المهمة, target_name=الشخص أو الرقم)\n' +
     '- أجّل/أجل كل المهام لبكرة/الغد = postpone_all\n' +
     '- احذف كل المهام/امسح كلها = delete_all\n' +
     '- احذف المنجزة/امسح المنجزة = delete_done\n' +
@@ -1474,6 +1488,67 @@ cron.schedule('* * * * *', async function() {
   } catch(e) { console.error('daily_reminders cron:', e.message); }
 }, { timezone: 'Asia/Riyadh' });
 
+// ─── Cron: تذكير المناسبات (كل يوم 9 ص) ────────────────────────────────────
+cron.schedule('0 9 * * *', async function() {
+  try {
+    const today10 = todayStr();
+    const tomorrow10 = (function(){ const d=new Date(); d.setDate(d.getDate()+1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })();
+    // مناسبات اليوم
+    const todayOcc = await pool.query("SELECT * FROM occasions WHERE occasion_date=$1",[today10]);
+    for (const o of todayOcc.rows) {
+      await sendWA(PHONE, '🎉 *اليوم مناسبة!*\n\n' + o.title + '\n\nلا تنسى التهنئة 😊');
+    }
+    // مناسبات بكرة
+    const tomOcc = await pool.query("SELECT * FROM occasions WHERE occasion_date=$1",[tomorrow10]);
+    for (const o of tomOcc.rows) {
+      await sendWA(PHONE, '🎉 *تذكير: بكرة مناسبة*\n\n' + o.title + '\n\nاستعد مبكراً 😊');
+    }
+  } catch(e) {}
+}, { timezone: 'Asia/Riyadh' });
+
+// ─── Cron: إنهاء وضع التركيز تلقائي ─────────────────────────────────────────
+cron.schedule('* * * * *', async function() {
+  try {
+    const now10 = new Date();
+    const focusEnds = await pool.query("SELECT * FROM scheduled_messages WHERE sent=false AND target_name='focus_end' AND send_at<=$1",[now10]);
+    for (const m of focusEnds.rows) {
+      await setBusy(false);
+      await pool.query('UPDATE scheduled_messages SET sent=true WHERE id=$1',[m.id]);
+      await sendWA(m.owner, '✅ انتهى وضع التركيز — أنت متاح الحين 🎯');
+    }
+  } catch(e) {}
+}, { timezone: 'Asia/Riyadh' });
+
+// ─── Cron: ملخص نهاية اليوم 10 م ────────────────────────────────────────────
+cron.schedule('0 22 * * *', async function() {
+  try {
+    const today11 = todayStr();
+    const [doneToday, pendingToday, tomorrowT] = await Promise.all([
+      pool.query("SELECT * FROM tasks WHERE done=true AND DATE(created_at AT TIME ZONE 'Asia/Riyadh')=$1",[today11]),
+      pool.query("SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time",[today11]),
+      pool.query("SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time",[(function(){ const d=new Date(); d.setDate(d.getDate()+1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })()])
+    ]);
+    let msg11 = '🌙 *ملخص يومك:*\n\n';
+    if (doneToday.rows.length) {
+      msg11 += '✅ *أنجزت اليوم (' + doneToday.rows.length + '):*\n';
+      doneToday.rows.forEach(function(t){ msg11 += '  ~' + t.title + '~\n'; });
+      msg11 += '\n';
+    } else {
+      msg11 += '📋 ما أنجزت مهام اليوم\n\n';
+    }
+    if (pendingToday.rows.length) {
+      msg11 += '⏳ *لم تنجز (' + pendingToday.rows.length + '):*\n';
+      pendingToday.rows.forEach(function(t){ msg11 += '  🔹 ' + t.title + '\n'; });
+      msg11 += '\n';
+    }
+    if (tomorrowT.rows.length) {
+      msg11 += '📅 *بكرة (' + tomorrowT.rows.length + '):*\n';
+      tomorrowT.rows.forEach(function(t){ msg11 += '  ' + (t.type==='meeting'?'📅':'🔹') + ' ' + t.title + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+    }
+    await sendWA(PHONE, msg11.trim());
+  } catch(e) { console.error('EOD summary:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
 // ─── Cron: تذكير 24 ساعة قبل الاجتماعات المهمة ─────────────────────────────
 cron.schedule('0 11 * * *', async function() {
   try {
@@ -2277,6 +2352,77 @@ async function handleOwner(from, msg) {
       await pool.query("UPDATE vacation SET active=false WHERE id=$1",[v.id]);
       await setBusy(false);
       await sendWA(from, '✅ تم إلغاء الإجازة');
+      break;
+    }
+
+    case 'focus_mode': {
+      const focusMins = analysis.time ? parseInt(analysis.time) : 60;
+      await setBusy(true);
+      // جدول إنهاء التركيز تلقائي
+      const focusEnd = new Date(Date.now() + focusMins * 60000);
+      await pool.query('INSERT INTO scheduled_messages (owner,target_phone,target_name,message,send_at) VALUES ($1,$2,$3,$4,$5)',
+        [from, from, 'focus_end', 'FOCUS_END', focusEnd]);
+      await sendWA(from, '🎯 وضع التركيز مفعّل لـ *' + focusMins + '* دقيقة\nالزوار لن يصلوك حتى ' + fmt12(String(focusEnd.getHours()).padStart(2,'0')+':'+String(focusEnd.getMinutes()).padStart(2,'0')));
+      break;
+    }
+
+    case 'end_focus': {
+      await setBusy(false);
+      await sendWA(from, '✅ انتهى وضع التركيز — أنت متاح الحين');
+      break;
+    }
+
+    case 'share_task': {
+      const stTitle = analysis.task_title || '';
+      const stTarget = analysis.target_name || '';
+      if (!stTitle) { await sendWA(from, '❓ حدد اسم المهمة\nمثال: "شارك اجتماع أحمد مع محمد"'); break; }
+      const r = await pool.query("SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",['%'+stTitle.substring(0,15)+'%']);
+      if (!r.rows.length) { await sendWA(from, '❓ ما لقيت المهمة "' + stTitle + '"'); break; }
+      const t = r.rows[0];
+      let targetPhone2 = null;
+      const phoneMatchS = msg.match(/(?:966|0)?5\d{8}/);
+      if (phoneMatchS) {
+        targetPhone2 = phoneMatchS[0].startsWith('966') ? phoneMatchS[0] : '966'+phoneMatchS[0].replace(/^0/,'');
+      } else if (stTarget) {
+        const rel = await pool.query('SELECT * FROM special_contacts WHERE name ILIKE $1 LIMIT 1',['%'+stTarget+'%']);
+        if (rel.rows.length) targetPhone2 = rel.rows[0].phone;
+      }
+      if (!targetPhone2) { await sendWA(from, '❓ ما عرفت الشخص، أضف رقمه أو استخدم رقم مباشر'); break; }
+      let shareMsg = '📌 *مهمة مشتركة من عبدالعزيز:*\n\n';
+      shareMsg += '*' + t.title + '*\n';
+      if (t.date) shareMsg += '📅 ' + t.date + '\n';
+      if (t.time) shareMsg += '⏰ ' + fmt12(t.time) + '\n';
+      if (t.note) shareMsg += '📝 ' + t.note + '\n';
+      await sendWA(targetPhone2, shareMsg);
+      await sendWA(from, '✅ تم إرسال المهمة لـ ' + (stTarget||targetPhone2));
+      break;
+    }
+
+    case 'add_occasion': {
+      const oTitle = analysis.task_title || msg;
+      const oDate  = analysis.date;
+      const oType  = analysis.note || 'other';
+      if (!oTitle || !oDate) {
+        await sendWA(from, '❓ أرسل: "أضف مناسبة [الاسم] [التاريخ]"\nمثال: "أضف مناسبة عيد ميلاد أحمد 15-05"');
+        break;
+      }
+      await pool.query('INSERT INTO occasions (title,occasion_date,type) VALUES ($1,$2,$3)',[oTitle,oDate,oType]);
+      await sendWA(from, '🎉 تمت إضافة مناسبة: *' + oTitle + '* في ' + oDate);
+      break;
+    }
+
+    case 'show_occasions': {
+      const today9 = todayStr();
+      const r = await pool.query("SELECT * FROM occasions ORDER BY occasion_date LIMIT 10");
+      if (!r.rows.length) { await sendWA(from, '📅 ما عندك مناسبات مسجلة\n\nأضف بقول: "أضف مناسبة عيد ميلاد أحمد 15-05-2026"'); break; }
+      let list = '🎉 *مناسباتك:*\n\n';
+      r.rows.forEach(function(o,i){
+        const d = new Date(o.occasion_date+'T12:00:00');
+        const daysLeft = Math.ceil((d-new Date())/(1000*60*60*24));
+        const badge = daysLeft <= 7 ? ' 🔔' : daysLeft <= 30 ? ' 📅' : '';
+        list += (i+1) + '. *' + o.title + '* — ' + o.occasion_date + (daysLeft > 0 ? ' (بعد '+daysLeft+' يوم)' : ' (اليوم! 🎉)') + badge + '\n';
+      });
+      await sendWA(from, list);
       break;
     }
 
