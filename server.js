@@ -3024,25 +3024,34 @@ async function handleOwnerState(from, msg, state) {
       userState[from] = { step: 'idle' }; return;
     }
     const p = await parseTask(state.taskTitle + ' ' + msg);
-    if (p && p.date && p.time) {
+    // دمج مع التاريخ/الوقت المحفوظ في الـ state
+    const finalDate = (p && p.date) || state.date || null;
+    const finalTime = (p && p.time) || state.time || null;
+    if (finalDate && finalTime) {
       // تحقق من الجمعة
-      if (isFriday(p.date)) {
+      if (isFriday(finalDate)) {
         const dayLabels = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
-        userState[from] = { step: 'waiting_friday_confirm', taskTitle: state.taskTitle, taskType: state.taskType||'task', taskNote: state.taskNote||'', date: p.date, time: p.time };
-        await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels[state.taskType]||'المهمة') + ' بتاريخ *' + p.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
+        userState[from] = { step: 'waiting_friday_confirm', taskTitle: state.taskTitle, taskType: state.taskType||'task', taskNote: state.taskNote||'', date: finalDate, time: finalTime };
+        await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels[state.taskType]||'المهمة') + ' بتاريخ *' + finalDate + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
         return;
       }
       if (state.taskType === 'meeting') {
-        userState[from] = Object.assign({}, state, { step: 'waiting_location', date: p.date, time: p.time });
+        userState[from] = Object.assign({}, state, { step: 'waiting_location', date: finalDate, time: finalTime });
         await sendWA(from, '📍 أين موقع الاجتماع؟\nأو أرسل *تخطي*');
       } else {
         const id = Date.now();
-        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',[id,state.taskTitle,state.taskType||'task',p.date,p.time,state.taskNote||'','']);
-        await sendWA(from, '✅ تم التسجيل!\n📌 *' + state.taskTitle + '*\n⏰ ' + fmt12(p.time) + '\n📅 ' + p.date);
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',[id,state.taskTitle,state.taskType||'task',finalDate,finalTime,state.taskNote||'','']);
+        await sendWA(from, '✅ تم التسجيل!\n📌 *' + state.taskTitle + '*\n⏰ ' + fmt12(finalTime) + '\n📅 ' + finalDate);
         userState[from] = { step: 'idle' };
       }
+    } else if (finalDate && !finalTime) {
+      userState[from] = Object.assign({}, state, { date: finalDate });
+      await sendWA(from, '⏰ وش الوقت؟');
+    } else if (!finalDate && finalTime) {
+      userState[from] = Object.assign({}, state, { time: finalTime });
+      await sendWA(from, '📅 أي يوم؟');
     } else {
-      await sendWA(from, '❓ لم أفهم الوقت.\n\nمثال: "غداً الساعة 3 العصر"\n\nأو أرسل *الغي* لإلغاء الإضافة');
+      await sendWA(from, '❓ لم أفهم.\n\nمثال: "غداً الساعة 3 العصر"\n\nأو أرسل *الغي* لإلغاء الإضافة');
     }
     return;
   }
@@ -3319,17 +3328,24 @@ async function handleOwnerState(from, msg, state) {
       await sendWA(from, '📅 أرسل التاريخ الجديد:');
     } else {
       const cancelWords = ['الغ','الغي','إلغاء','الغاء','لا','لأ','ما أبغى','وقف'];
-      const isCancel = cancelWords.some(function(w){ return msg.includes(w); });
+      const isCancel = cancelWords.some(function(w){ return msg.trim() === w || msg.includes(w); });
+      // كلمات تخص إدارة المهام الموجودة — لا نعالجها ونعيد التنبيه فقط
+      const taskMgmtWords = ['احذف','حذف','امسح','عدّل','عدل','أجّل','اجل','منجز','انجز','كل المهام','وش عندي','المهام'];
+      const isTaskMgmt = taskMgmtWords.some(function(w){ return msg.includes(w); });
       if (isCancel) {
         // إلغاء المهمة المعلقة
         userState[from] = { step: 'idle' };
         await sendWA(from, '✅ تم إلغاء التسجيل');
+      } else if (isTaskMgmt) {
+        // أوامر إدارة المهام — أعد التنبيه فقط بدون تنفيذ
+        const dayLabels2 = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
+        await sendWA(from, '⚠️ عندك تنبيه معلق أولاً:\n\n*تنبيه:* ' + (dayLabels2[state.taskType]||'المهمة') + ' بتاريخ *' + state.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد\n❌ الغي — إلغاء التسجيل');
       } else {
-        // احفظ الـ state مؤقتاً وعالج الطلب ثم أعد التنبيه
+        // طلب عادي (طقس، سؤال...) — جاوب وأعد التنبيه
         const savedState = Object.assign({}, state);
         userState[from] = { step: 'idle' };
         await handleOwner(from, msg);
-        // أعد الـ state وأرسل التنبيه مرة ثانية — بس لو ما تغيّر الـ state
+        // أعد الـ state فقط لو ما صار state جديد
         if (!userState[from] || userState[from].step === 'idle') {
           userState[from] = savedState;
           const dayLabels2 = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
