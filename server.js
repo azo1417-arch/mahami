@@ -494,12 +494,23 @@ async function parseTask(msg) {
     if (fd !== today) processed += ' تاريخ ' + fd;
   }
 
+  // احسب أيام الأسبوع القادمة
+  const dayNamesAr = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  const dayNamesAr2 = ['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+  let weekDays = '';
+  for (let d = 1; d <= 7; d++) {
+    const dd = new Date(now); dd.setDate(now.getDate() + d);
+    const ds = dd.getFullYear() + '-' + String(dd.getMonth()+1).padStart(2,'0') + '-' + String(dd.getDate()).padStart(2,'0');
+    weekDays += '- ' + dayNamesAr[dd.getDay()] + ' / ' + dayNamesAr2[dd.getDay()] + ' القادم = ' + ds + '\n';
+  }
+
   const prompt =
     'معلومات الوقت الآن بتوقيت الرياض:\n' +
     '- اليوم: ' + dayName + '\n' +
     '- التاريخ اليوم: ' + today + '\n' +
     '- تاريخ الغد: ' + tomorrow + '\n' +
-    '- الوقت الحالي: ' + cur + '\n\n' +
+    '- الوقت الحالي: ' + cur + '\n' +
+    '- أيام الأسبوع القادمة:\n' + weekDays + '\n' +
     'استخرج معلومات المهمة وأعد JSON فقط:\n' +
     '{"title":"","type":"task او meeting او reminder","date":"YYYY-MM-DD او null","time":"HH:MM او null","note":""}\n\n' +
     'قواعد:\n' +
@@ -508,6 +519,8 @@ async function parseTask(msg) {
     '- غير ذلك = task\n' +
     '- اليوم = ' + today + '\n' +
     '- بكرة/غداً/الغد = ' + tomorrow + '\n' +
+    '- الجمعة/السبت/الأحد القادم = استخدم التاريخ المحسوب أعلاه مباشرة بدون تعديل\n' +
+    '- مهم جداً: "الجمعة القادمة" = أقرب جمعة في المستقبل من اليوم (مو بعد أسبوع)\n' +
     '- الساعة 3 العصر = 15:00\n' +
     '- الساعة 3 الصبح = 03:00\n' +
     '- بدون تاريخ = null, بدون وقت = null\n\n' +
@@ -524,6 +537,18 @@ async function analyzeOwner(msg, context) {
     'أنت محلل ذكي لرسائل عبدالعزيز. أعد JSON فقط.\n' +
     'السياق:\n' + context + '\n' +
     'الوقت: ' + cur + ' التاريخ: ' + today + '\n' +
+    (function(){
+      const _dn = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+      const _dn2 = ['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+      const _now = new Date();
+      let _s = 'أيام الأسبوع القادمة: ';
+      for (let _d = 1; _d <= 7; _d++) {
+        const _dd = new Date(_now); _dd.setDate(_now.getDate()+_d);
+        const _ds = _dd.getFullYear()+'-'+String(_dd.getMonth()+1).padStart(2,'0')+'-'+String(_dd.getDate()).padStart(2,'0');
+        _s += _dn[_dd.getDay()] + '/' + _dn2[_dd.getDay()] + '=' + _ds + ' ';
+      }
+      return _s + '\n';
+    })() +
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
@@ -571,6 +596,7 @@ async function analyzeOwner(msg, context) {
     '- اخبار/خبر عن/وش صار = news (task_title = الموضوع)\n' +
     '- ابحث/وش هو/عرفني عن/وش تعرف عن = search (task_title = موضوع البحث)\n' +
     '- بعد X دقيقة/ساعة = احسب الوقت من ' + cur + '\n' +
+    '- الجمعة/السبت/الأحد... القادم = استخدم التاريخ المحسوب في السطر أعلاه مباشرة (أقرب يوم في المستقبل)\n' +
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
     '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks\n' +
     '- أجّل/أجل كل المهام لبكرة/الغد = postpone_all\n' +
@@ -2831,23 +2857,33 @@ async function handleOwner(from, msg) {
       const targetStr = targetDate.getFullYear() + '-' + String(targetDate.getMonth()+1).padStart(2,'0') + '-' + String(targetDate.getDate()).padStart(2,'0');
       const targetLabel = daysToAdd === 1 ? 'بكرة' : daysToAdd === 2 ? 'بعد بكرة' : targetStr;
 
-      // حدد أي المهام تأجّل — المتأخرة فقط أو الكل
+      // حدد أي المهام تأجّل
       const overdueOnly = msg.includes('متأخر') || msg.includes('المتأخر') || msg.includes('اللي فاتت');
+      const todayOnly   = msg.includes('اليوم') && !msg.includes('كل');
       const today5 = todayStr();
-      let query, params;
+      let query, params, label;
       if (overdueOnly) {
+        // المتأخرة فقط (قبل اليوم)
         query = "SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time";
         params = [today5];
+        label = 'متأخرة';
+      } else if (todayOnly) {
+        // مهام اليوم فقط
+        query = "SELECT * FROM tasks WHERE done=false AND date = $1 ORDER BY time";
+        params = [today5];
+        label = 'اليوم';
       } else {
-        query = "SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date < $1) ORDER BY date,time";
-        params = [targetStr];
+        // اليوم والمتأخرة فقط (مو القادمة)
+        query = "SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date <= $1 ORDER BY date,time";
+        params = [today5];
+        label = 'اليوم والمتأخرة';
       }
       const r = await pool.query(query, params);
-      if (!r.rows.length) { await sendWA(from, '📋 ما في مهام ' + (overdueOnly?'متأخرة':'معلقة')); break; }
+      if (!r.rows.length) { await sendWA(from, '📋 ما في مهام ' + label); break; }
       for (const t of r.rows) {
         await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[targetStr,t.id]);
       }
-      await sendWA(from, '✅ تم تأجيل *' + r.rows.length + '* مهام ' + (overdueOnly?'متأخرة ':'') + 'لـ *' + targetLabel + '* ' + targetStr + ' 📅');
+      await sendWA(from, '✅ تم تأجيل *' + r.rows.length + '* مهام ' + label + ' لـ *' + targetLabel + '* 📅');
       break;
     }
 
