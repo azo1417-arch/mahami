@@ -174,6 +174,14 @@ async function initDB() {
     "value TEXT NOT NULL, " +
     "updated_at TIMESTAMP DEFAULT NOW())"
   );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS deleted_tasks (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "original_id BIGINT, " +
+    "title TEXT, type TEXT, date TEXT, time TEXT, " +
+    "note TEXT, location TEXT, done BOOLEAN, " +
+    "deleted_at TIMESTAMP DEFAULT NOW())"
+  );
   console.log('✅ DB جاهزة');
 }
 initDB();
@@ -552,7 +560,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_tasks|done|undo_done|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|stats|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -573,6 +581,7 @@ async function analyzeOwner(msg, context) {
     '- إجازة/اجازة/سأكون في إجازة من/إجازتي من = vacation (date=تاريخ البداية, time=وقت البداية, note=تاريخ النهاية/يوم المباشرة)\n' +
     '- الغ الإجازة/ألغِ الإجازة = cancel_vacation\n' +
     '- وش عندك متعلقات/وش المجمد/وش جاء بالإجازة = show_vacation_msgs\n' +
+    '- نكمل بعدين/خلها بعدين/بعدين/خلاص خلها/خلها لما أرجع/نكمل لاحقاً = show_vacation_msgs\n' +
     '- رجعت/خلصت = back\n' +
     '- رجعت من الإجازة/انهِ الإجازة/أنهِ الإجازة = back_from_vacation\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
@@ -599,6 +608,10 @@ async function analyzeOwner(msg, context) {
     '- الجمعة/السبت/الأحد... القادم = استخدم التاريخ المحسوب في السطر أعلاه مباشرة (أقرب يوم في المستقبل)\n' +
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
     '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks\n' +
+    '- وش عندي هالأسبوع/مهام الأسبوع/جدول الأسبوع = show_week_full\n' +
+    '- ابحث عن/فين مهمة/وش صار بـ = search_tasks (task_title=الكلمة)\n' +
+    '- خلّها عاجل/أولوية عاجلة/مهمة جداً = set_priority (task_title=اسم المهمة, note=urgent)\n' +
+    '- إحصائياتي/كم أنجزت/تقريري/وش أنجزت = stats\n' +
     '- أجّل/أجل كل المهام لبكرة/الغد = postpone_all\n' +
     '- احذف كل المهام/امسح كلها = delete_all\n' +
     '- احذف المنجزة/امسح المنجزة = delete_done\n' +
@@ -606,6 +619,7 @@ async function analyzeOwner(msg, context) {
     '- نظّف/نظف = delete_done\n' +
     '- إدارة المهام/اعرض وأدير/أدر المهام = manage_tasks\n' +
     '- إلغاء إنجاز/ما انجزتها/رجّعها = undo_done\n' +
+    '- رجّع المحذوفة/إلغاء الحذف/ما كان لازم أحذفها = undo_delete\n' +
     '- مهم جداً: "ارسل رسالة في اجتماع" أو "ارسل لفلان" = send_message أو scheduled_message وليس add_meeting\n' +
     '- add_meeting فقط لو فيه طلب حقيقي لتحديد موعد لقاء\n' +
     '- كلام عادي/سؤال/مشكلة/أي شيء ثاني = chat\n' +
@@ -1143,6 +1157,21 @@ async function setBusy(val) {
 }
 
 
+// ─── حذف مع log ─────────────────────────────────────────────────────────────
+async function deleteTask(taskId) {
+  try {
+    const r = await pool.query('SELECT * FROM tasks WHERE id=$1',[taskId]);
+    if (r.rows.length) {
+      const t = r.rows[0];
+      await pool.query(
+        'INSERT INTO deleted_tasks (original_id,title,type,date,time,note,location,done) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [t.id, t.title, t.type, t.date, t.time, t.note||'', t.location||'', t.done]
+      );
+    }
+    await pool.query('DELETE FROM tasks WHERE id=$1',[taskId]);
+  } catch(e) { console.error('deleteTask:', e.message); }
+}
+
 // ─── نظام الإجازة ────────────────────────────────────────────────────────────
 async function getVacation() {
   try {
@@ -1441,6 +1470,24 @@ cron.schedule('* * * * *', async function() {
       }
     }
   } catch(e) { console.error('daily_reminders cron:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
+// ─── Cron: تنبيه اليوم المزدحم ─────────────────────────────────────────────
+cron.schedule('0 21 * * *', async function() {
+  try {
+    const tomorrow2 = new Date(); tomorrow2.setDate(tomorrow2.getDate()+1);
+    const tomStr2 = tomorrow2.getFullYear()+'-'+String(tomorrow2.getMonth()+1).padStart(2,'0')+'-'+String(tomorrow2.getDate()).padStart(2,'0');
+    const r = await pool.query("SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time",[tomStr2]);
+    if (r.rows.length >= 4) {
+      const meetings = r.rows.filter(function(t){ return t.type==='meeting'; });
+      let warn = '⚠️ *تنبيه: بكرة عندك ' + r.rows.length + ' مهام';
+      if (meetings.length >= 2) warn += ' منها ' + meetings.length + ' اجتماعات';
+      warn += '*\n\n';
+      r.rows.forEach(function(t){ warn += (t.type==='meeting'?'📅':'🔹') + ' ' + t.title + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+      warn += '\nراجع جدولك وأجّل اللي ممكن 💡';
+      await sendWA(PHONE, warn);
+    }
+  } catch(e) {}
 }, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: ملخص صباحي 8 ص ────────────────────────────────────────────────
@@ -1939,7 +1986,7 @@ async function buildTasksList(includeTitle) {
   ]);
   const all = [...overdueR.rows, ...todayR.rows, ...upcomingR.rows];
   if (!all.length) return { text: '📋 ما عندك مهام معلقة ✅', tasks: [], count: 0 };
-  const ic = function(t){ return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹'; };
+  const ic = function(t){ return (t.priority==='urgent'?'🔴 ':''  ) + (t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹'); };
   let i = 0;
   let txt = includeTitle ? '📋 *مهامك:*\n\n' : '';
   if (overdueR.rows.length) {
@@ -2720,7 +2767,7 @@ async function handleOwner(from, msg) {
       const tl = await buildTasksList(false);
       if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
       if (tl.count === 1) {
-        await pool.query('DELETE FROM tasks WHERE id=$1',[tl.tasks[0].id]);
+        await deleteTask(tl.tasks[0].id);
         await sendWA(from, '🗑️ تم حذف *' + tl.tasks[0].title + '*'); break;
       }
       await sendWA(from, tl.text + '\n\n🗑️ أرسل رقم المهمة أو *الكل* لحذف كل شيء');
@@ -2799,7 +2846,9 @@ async function handleOwner(from, msg) {
     }
 
     case 'delete_done': {
-      const r = await pool.query("DELETE FROM tasks WHERE done=true RETURNING id");
+      const doneToDelete = await pool.query("SELECT * FROM tasks WHERE done=true");
+      for (const t of doneToDelete.rows) await deleteTask(t.id);
+      const r = { rows: doneToDelete.rows };
       const cnt = r.rows.length;
       if (!cnt) { await sendWA(from, '✅ ما في مهام منجزة أحذفها'); break; }
       await sendWA(from, '🗑️ تم حذف *' + cnt + '* مهمة منجزة ✅');
@@ -2808,7 +2857,9 @@ async function handleOwner(from, msg) {
 
     case 'delete_overdue': {
       const today3 = todayStr();
-      const r = await pool.query("DELETE FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 RETURNING id",[today3]);
+      const overdueToDelete = await pool.query("SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1",[today3]);
+      for (const t of overdueToDelete.rows) await deleteTask(t.id);
+      const r = { rows: overdueToDelete.rows };
       const cnt = r.rows.length;
       if (!cnt) { await sendWA(from, '✅ ما في مهام متأخرة'); break; }
       await sendWA(from, '🗑️ تم حذف *' + cnt + '* مهمة متأخرة ✅');
@@ -2887,6 +2938,25 @@ async function handleOwner(from, msg) {
       break;
     }
 
+    case 'undo_delete': {
+      const r = await pool.query("SELECT * FROM deleted_tasks ORDER BY deleted_at DESC LIMIT 5");
+      if (!r.rows.length) { await sendWA(from, '❓ ما في مهام محذوفة أرجّعها'); break; }
+      if (r.rows.length === 1) {
+        const t = r.rows[0];
+        const newId = Date.now();
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location,done) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+          [newId, t.title, t.type||'task', t.date, t.time, t.note||'', t.location||'', false]);
+        await pool.query('DELETE FROM deleted_tasks WHERE id=$1',[t.id]);
+        await sendWA(from, '↩️ تم إرجاع *' + t.title + '*');
+        break;
+      }
+      let list = '↩️ *أي مهمة تبي ترجّعها؟*\n\n';
+      r.rows.forEach(function(t,i){ list += (i+1) + '. *' + t.title + '*' + (t.date?' — '+t.date:'') + '\n'; });
+      await sendWA(from, list + '\nأرسل الرقم');
+      userState[from] = { step: 'waiting_undo_delete_selection', tasks: r.rows };
+      break;
+    }
+
     case 'undo_done': {
       // جيب آخر مهمة تم إنجازها
       const r = await pool.query("SELECT * FROM tasks WHERE done=true ORDER BY created_at DESC LIMIT 5");
@@ -2900,6 +2970,80 @@ async function handleOwner(from, msg) {
       r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*\n'; });
       await sendWA(from, list + '\nأرسل الرقم');
       userState[from] = { step: 'waiting_undo_selection', tasks: r.rows };
+      break;
+    }
+
+    case 'show_week_full': {
+      const now2 = new Date();
+      const days = [];
+      for (let d = 0; d < 7; d++) {
+        const dd = new Date(now2); dd.setDate(now2.getDate() + d);
+        days.push(dd.getFullYear() + '-' + String(dd.getMonth()+1).padStart(2,'0') + '-' + String(dd.getDate()).padStart(2,'0'));
+      }
+      const weekStart = days[0], weekEnd = days[6];
+      const r = await pool.query('SELECT * FROM tasks WHERE done=false AND date>=$1 AND date<=$2 ORDER BY date,time',[weekStart,weekEnd]);
+      if (!r.rows.length) { await sendWA(from, '📅 ما عندك مهام هالأسبوع ✅'); break; }
+      const dayNamesW = { 0:'الأحد', 1:'الاثنين', 2:'الثلاثاء', 3:'الأربعاء', 4:'الخميس', 5:'الجمعة', 6:'السبت' };
+      let msg3 = '📅 *جدول الأسبوع:*\n\n';
+      let lastDay = '';
+      r.rows.forEach(function(t) {
+        const d = new Date(t.date + 'T12:00:00');
+        const dayLabel = dayNamesW[d.getDay()] + ' ' + t.date;
+        if (dayLabel !== lastDay) { msg3 += '\n*' + dayLabel + ':*\n'; lastDay = dayLabel; }
+        const ic = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹';
+        msg3 += ic + ' ' + t.title + (t.time?' — '+fmt12(t.time):'') + '\n';
+      });
+      await sendWA(from, msg3.trim());
+      break;
+    }
+
+    case 'search_tasks': {
+      const q = analysis.task_title || msg;
+      const r = await pool.query("SELECT * FROM tasks WHERE LOWER(title) LIKE LOWER($1) OR LOWER(note) LIKE LOWER($1) ORDER BY date,time LIMIT 10",['%'+q+'%']);
+      if (!r.rows.length) { await sendWA(from, '🔍 ما لقيت مهمة تحتوي "' + q + '"'); break; }
+      let list = '🔍 *نتائج البحث:*\n\n';
+      r.rows.forEach(function(t,i){
+        const ic = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹';
+        list += (i+1) + '. ' + ic + ' *' + t.title + '*' + (t.date?' — '+t.date:'') + (t.done?' ✅':'') + '\n';
+      });
+      await sendWA(from, list);
+      break;
+    }
+
+    case 'set_priority': {
+      const ptitle = analysis.task_title || msg;
+      const priority = (analysis.note||'').includes('urgent') || msg.includes('عاجل') ? 'urgent' : 'normal';
+      const r = await pool.query("SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",['%'+ptitle.substring(0,15)+'%']);
+      if (!r.rows.length) { await sendWA(from, '❓ ما لقيت المهمة، حدد الاسم أكثر'); break; }
+      await pool.query('UPDATE tasks SET priority=$1 WHERE id=$2',[priority,r.rows[0].id]);
+      await sendWA(from, (priority==='urgent'?'🔴':'⚪') + ' تم تعيين أولوية "' + r.rows[0].title + '" كـ ' + (priority==='urgent'?'عاجلة':'عادية'));
+      break;
+    }
+
+    case 'stats': {
+      const today6 = todayStr();
+      const monthStart = today6.substring(0,7) + '-01';
+      const weekAgo2 = new Date(); weekAgo2.setDate(weekAgo2.getDate()-7);
+      const wa2 = weekAgo2.getFullYear()+'-'+String(weekAgo2.getMonth()+1).padStart(2,'0')+'-'+String(weekAgo2.getDate()).padStart(2,'0');
+      const [doneMonth, doneWeek, pendingAll2, overdueAll2, totalAll] = await Promise.all([
+        pool.query("SELECT COUNT(*) FROM tasks WHERE done=true AND created_at>=$1",[monthStart]),
+        pool.query("SELECT COUNT(*) FROM tasks WHERE done=true AND created_at>=$1",[wa2]),
+        pool.query("SELECT COUNT(*) FROM tasks WHERE done=false AND (date IS NULL OR date >= $1)",[today6]),
+        pool.query("SELECT COUNT(*) FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1",[today6]),
+        pool.query("SELECT COUNT(*) FROM tasks WHERE done=true")
+      ]);
+      const pending2 = parseInt(pendingAll2.rows[0].count);
+      const overdue2 = parseInt(overdueAll2.rows[0].count);
+      const total2   = pending2 + overdue2 + parseInt(doneMonth.rows[0].count);
+      const pct2     = total2 > 0 ? Math.round(parseInt(doneMonth.rows[0].count)/total2*100) : 0;
+      let statsMsg = '📊 *إحصائياتك:*\n\n';
+      statsMsg += '✅ أنجزت هذا الشهر: *' + doneMonth.rows[0].count + '*\n';
+      statsMsg += '✅ أنجزت هذا الأسبوع: *' + doneWeek.rows[0].count + '*\n';
+      statsMsg += '📋 معلقة: *' + pending2 + '*\n';
+      statsMsg += '⚠️ متأخرة: *' + overdue2 + '*\n';
+      statsMsg += '🏆 إجمالي المنجزة: *' + totalAll.rows[0].count + '*\n';
+      statsMsg += '📈 نسبة الإنجاز هذا الشهر: *' + pct2 + '%*';
+      await sendWA(from, statsMsg);
       break;
     }
 
@@ -3128,7 +3272,7 @@ async function handleOwnerState(from, msg, state) {
   if (state.step === 'waiting_delete_selection') {
     const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
     if (isAll) {
-      for (const t of state.tasks) await pool.query('DELETE FROM tasks WHERE id=$1',[t.id]);
+      for (const t of state.tasks) await deleteTask(t.id);
       await sendWA(from, '🗑️ تم حذف *' + state.tasks.length + '* مهام');
       userState[from] = { step: 'idle' }; return;
     }
@@ -3139,7 +3283,7 @@ async function handleOwnerState(from, msg, state) {
       if (valid.length === 0) { await sendWA(from, '❓ أرسل رقم من القائمة'); return; }
       const deleted = [];
       for (const n of valid) {
-        await pool.query('DELETE FROM tasks WHERE id=$1',[state.tasks[n-1].id]);
+        await deleteTask(state.tasks[n-1].id);
         deleted.push(state.tasks[n-1].title);
       }
       if (deleted.length === 1) { await sendWA(from, '🗑️ تم حذف *' + deleted[0] + '*'); }
@@ -3388,7 +3532,7 @@ async function handleOwnerState(from, msg, state) {
       await sendWA(from, '✅ *' + t.title + '* تم إنجازها 🎉');
       userState[from] = { step: 'idle' };
     } else if (isDelete) {
-      await pool.query('DELETE FROM tasks WHERE id=$1',[t.id]);
+      await deleteTask(t.id);
       await sendWA(from, '🗑️ تم حذف *' + t.title + '*');
       userState[from] = { step: 'idle' };
     } else if (isDefer) {
@@ -3403,6 +3547,21 @@ async function handleOwnerState(from, msg, state) {
     } else {
       await sendWA(from, '❓ ما فهمت — مثال: *3 منجز* أو *3 احذف* أو *3 أجّل* أو *3 عدّل*');
     }
+    return;
+  }
+
+  if (state.step === 'waiting_undo_delete_selection') {
+    const n = parseInt(msg);
+    if (n >= 1 && n <= state.tasks.length) {
+      const t = state.tasks[n-1];
+      const newId = Date.now();
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location,done) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [newId, t.title, t.type||'task', t.date, t.time, t.note||'', t.location||'', false]);
+      await pool.query('DELETE FROM deleted_tasks WHERE id=$1',[t.id]);
+      await sendWA(from, '↩️ تم إرجاع *' + t.title + '*');
+      userState[from] = { step: 'idle' };
+    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
     return;
   }
 
