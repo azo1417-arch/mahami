@@ -561,7 +561,8 @@ async function analyzeOwner(msg, context) {
     '- سوّ/اعمل/ابن جدول أو ملف أو تقرير أو خطة = create_file (task_title=وصف الطلب)\n' +
     '- عدّل/غيّر في الملف = edit_file (task_title=التعديل المطلوب)\n' +
     '- أرسلني الملف PDF/بي دي اف/صدّره PDF = export_pdf\n' +
-    '- وش صلاحياتك/صلاحيات نواف = show_permissions\n' +
+    '- وش صلاحياتك معي/وش تقدر تسوي/صلاحياتك عندي = show_permissions\n' +
+    '- وش صلاحياتك مع الزوار/صلاحيات الزوار = show_permissions\n' +
     '- وقف/شغّل صلاحية [رقم أو اسم] = set_permission (task_title=الرقم أو الاسم, note=وقف أو شغّل)\n' +
     '- الجو/الطقس/حرارة/بارد/حار/درجة/حرارة الجو = weather (task_title = اسم المدينة لو ذكرت)\n' +
     '- سعر الدولار/العملات/الريال/صرف = currency\n' +
@@ -2513,8 +2514,11 @@ async function handleOwner(from, msg) {
     }
 
     case 'show_permissions': {
-      const target = msg.includes('معي') || msg.includes('عندي') ? 'owner' : 'visitor';
-      if (target === 'owner') {
+      const askOwner  = msg.includes('معي') || msg.includes('عندي') || msg.includes('معك');
+      const askVisitor = msg.includes('زوار') || msg.includes('زائر') || msg.includes('الزوار');
+
+      if (askOwner && !askVisitor) {
+        // صلاحياتي مع المالك فقط
         await sendWA(from,
           '⚙️ *صلاحياتي معك:*\n\n' +
           '✅ إنشاء الملفات (جداول، تقارير، استبيانات)\n' +
@@ -2522,17 +2526,40 @@ async function handleOwner(from, msg) {
           '✅ البحث في الإنترنت\n' +
           '✅ الطقس والعملات والذهب\n' +
           '✅ تسجيل المهام والاجتماعات والتذكيرات\n' +
-          '✅ الرسائل المجدولة\n' +
-          '✅ التذكيرات اليومية\n' +
+          '✅ الرسائل المجدولة والتذكيرات اليومية\n' +
           '✅ قراءة الصور والـ PDF\n' +
           '✅ الرسائل الصوتية\n' +
           '✅ الذاكرة وحفظ المعلومات\n' +
           '✅ المواعيد المتاحة\n' +
-          '✅ خرائط ومسافات\n\n' +
+          '✅ خرائط ومسافات\n' +
+          '✅ وضع الإجازة وتجميد الرسائل\n' +
+          '✅ إدارة صلاحيات الزوار\n\n' +
           'هذي الصلاحيات دائماً مفعّلة معك 😊'
         );
-      } else {
+      } else if (askVisitor && !askOwner) {
+        // صلاحيات الزوار فقط
         const perms = await getPermsStatus(null);
+        await sendWA(from, buildPermsMsg(perms, ''));
+        userState[from] = Object.assign(userState[from]||{}, { step: 'waiting_perm_toggle', permTarget: 'all', permTargetLabel: '' });
+      } else {
+        // الاثنين مع بعض
+        const perms = await getPermsStatus(null);
+        let ownerMsg =
+          '⚙️ *صلاحياتي معك:*\n\n' +
+          '✅ إنشاء الملفات (جداول، تقارير، استبيانات)\n' +
+          '✅ تحويل وإرسال PDF\n' +
+          '✅ البحث في الإنترنت\n' +
+          '✅ الطقس والعملات والذهب\n' +
+          '✅ تسجيل المهام والاجتماعات والتذكيرات\n' +
+          '✅ الرسائل المجدولة والتذكيرات اليومية\n' +
+          '✅ قراءة الصور والـ PDF\n' +
+          '✅ الرسائل الصوتية\n' +
+          '✅ الذاكرة وحفظ المعلومات\n' +
+          '✅ المواعيد المتاحة\n' +
+          '✅ خرائط ومسافات\n' +
+          '✅ وضع الإجازة وتجميد الرسائل\n' +
+          '✅ إدارة صلاحيات الزوار';
+        await sendWA(from, ownerMsg);
         await sendWA(from, buildPermsMsg(perms, ''));
         userState[from] = Object.assign(userState[from]||{}, { step: 'waiting_perm_toggle', permTarget: 'all', permTargetLabel: '' });
       }
@@ -2708,6 +2735,14 @@ async function handleOwner(from, msg) {
             break;
           }
         } catch(e) {}
+      }
+
+      // ── تحقق من يوم الجمعة ──────────────────────────────────────────────
+      if (analysis.date && isFriday(analysis.date)) {
+        userState[from] = { step: 'waiting_friday_confirm', taskTitle: title, taskType: type, taskNote: analysis.note||'', date: analysis.date, time: analysis.time };
+        const dayLabels = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
+        await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels[type]||'المهمة') + ' بتاريخ *' + analysis.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
+        break;
       }
 
       if (analysis.date && analysis.time) {
@@ -2936,6 +2971,13 @@ async function handleOwnerState(from, msg, state) {
     }
     const p = await parseTask(state.taskTitle + ' ' + msg);
     if (p && p.date && p.time) {
+      // تحقق من الجمعة
+      if (isFriday(p.date)) {
+        const dayLabels = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
+        userState[from] = { step: 'waiting_friday_confirm', taskTitle: state.taskTitle, taskType: state.taskType||'task', taskNote: state.taskNote||'', date: p.date, time: p.time };
+        await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels[state.taskType]||'المهمة') + ' بتاريخ *' + p.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
+        return;
+      }
       if (state.taskType === 'meeting') {
         userState[from] = Object.assign({}, state, { step: 'waiting_location', date: p.date, time: p.time });
         await sendWA(from, '📍 أين موقع الاجتماع؟\nأو أرسل *تخطي*');
