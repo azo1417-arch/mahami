@@ -560,7 +560,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|stats|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|add_note|stats|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -611,6 +611,7 @@ async function analyzeOwner(msg, context) {
     '- وش عندي هالأسبوع/مهام الأسبوع/جدول الأسبوع = show_week_full\n' +
     '- وش عندي بكرة/بعد بكرة/بعد يومين/بعد X أيام/يوم الأحد/يوم الاثنين = show_date (date=التاريخ المحسوب)\n' +
     '- ابحث عن/فين مهمة/وش صار بـ = search_tasks (task_title=الكلمة)\n' +
+    '- أضف ملاحظة على/علّق على = add_note (task_title=اسم المهمة, note=نص الملاحظة)\n' +
     '- خلّها عاجل/أولوية عاجلة/مهمة جداً = set_priority (task_title=اسم المهمة, note=urgent)\n' +
     '- إحصائياتي/كم أنجزت/تقريري/وش أنجزت = stats\n' +
     '- أجّل/أجل كل المهام لبكرة/الغد = postpone_all\n' +
@@ -1064,7 +1065,7 @@ async function buildGoogleFile(request, profile) {
 async function saveConvMsg(phone, role, message) {
   try {
     await pool.query('INSERT INTO conversation_history (phone,role,message) VALUES ($1,$2,$3)',[phone,role,message]);
-    await pool.query('DELETE FROM conversation_history WHERE phone=$1 AND id NOT IN (SELECT id FROM conversation_history WHERE phone=$1 ORDER BY created_at DESC LIMIT 20)',[phone,phone]);
+    await pool.query('DELETE FROM conversation_history WHERE phone=$1 AND id NOT IN (SELECT id FROM conversation_history WHERE phone=$1 ORDER BY created_at DESC LIMIT 30)',[phone,phone]);
   } catch(e) {}
 }
 
@@ -1473,6 +1474,24 @@ cron.schedule('* * * * *', async function() {
   } catch(e) { console.error('daily_reminders cron:', e.message); }
 }, { timezone: 'Asia/Riyadh' });
 
+// ─── Cron: تذكير 24 ساعة قبل الاجتماعات المهمة ─────────────────────────────
+cron.schedule('0 11 * * *', async function() {
+  try {
+    const tomorrow3 = new Date(); tomorrow3.setDate(tomorrow3.getDate()+1);
+    const tom3 = tomorrow3.getFullYear()+'-'+String(tomorrow3.getMonth()+1).padStart(2,'0')+'-'+String(tomorrow3.getDate()).padStart(2,'0');
+    const meetings = await pool.query("SELECT * FROM tasks WHERE done=false AND type='meeting' AND date=$1 ORDER BY time",[tom3]);
+    for (const m of meetings.rows) {
+      if (!sentReminders.has('24h_'+m.id)) {
+        sentReminders.add('24h_'+m.id);
+        let msg24 = '📅 *تذكير: اجتماع بكرة*\n\n📌 *' + m.title + '*\n⏰ ' + fmt12(m.time) + '\n📅 ' + m.date;
+        if (m.location) msg24 += '\n📍 ' + m.location;
+        msg24 += '\n\nاستعد مبكراً 💼';
+        await sendWA(PHONE, msg24);
+      }
+    }
+  } catch(e) { console.error('24h reminder:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
 // ─── Cron: تنبيه اليوم المزدحم ─────────────────────────────────────────────
 cron.schedule('0 21 * * *', async function() {
   try {
@@ -1487,6 +1506,19 @@ cron.schedule('0 21 * * *', async function() {
       r.rows.forEach(function(t){ warn += (t.type==='meeting'?'📅':'🔹') + ' ' + t.title + (t.time?' — '+fmt12(t.time):'') + '\n'; });
       warn += '\nراجع جدولك وأجّل اللي ممكن 💡';
       await sendWA(PHONE, warn);
+    }
+  } catch(e) {}
+}, { timezone: 'Asia/Riyadh' });
+
+// ─── Cron: نواف يبادر بالظهر لو ما سجلت شيء ────────────────────────────────
+cron.schedule('0 12 * * *', async function() {
+  try {
+    const today7 = todayStr();
+    // تحقق لو ما في مهام أُضيفت اليوم
+    const addedToday = await pool.query("SELECT COUNT(*) FROM tasks WHERE DATE(created_at AT TIME ZONE 'Asia/Riyadh') = $1",[today7]);
+    const convToday  = await pool.query("SELECT COUNT(*) FROM conversation_history WHERE phone=$1 AND DATE(created_at AT TIME ZONE 'Asia/Riyadh') = $2",[PHONE, today7]);
+    if (parseInt(addedToday.rows[0].count) === 0 && parseInt(convToday.rows[0].count) === 0) {
+      await sendWA(PHONE, '💡 ما سجلت أي شيء اليوم — وش عندك؟');
     }
   } catch(e) {}
 }, { timezone: 'Asia/Riyadh' });
@@ -2025,7 +2057,7 @@ async function handleOwner(from, msg) {
     const [pr, td, history, profile] = await Promise.all([
       pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 3"),
       pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time LIMIT 5',[todayStr()]),
-      getConvHistory(from, 8),
+      getConvHistory(from, 12),
       getProfile()
     ]);
     if (profile) context += 'معلومات عن عبدالعزيز:\n' + profile + '\n\n';
@@ -2692,40 +2724,63 @@ async function handleOwner(from, msg) {
     }
 
     case 'show_date': {
-      // احسب التاريخ المستهدف من الرسالة
+      const dayNamesAr3 = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+      const dayNames7 = { 'أحد':0,'اثنين':1,'ثلاثاء':2,'أربعاء':3,'خميس':4,'جمعة':5,'سبت':6 };
+      const makeDate = function(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); };
+
+      // هل هو نطاق (خلال/بعد أسبوع/بعد X أيام) أم يوم محدد؟
+      const isRange = msg.includes('خلال') || msg.includes('بعد أسبوع') || msg.includes('بعد اسبوع') ||
+                      msg.includes('هالأسبوع') || msg.includes('هذا الأسبوع') || msg.includes('هالاسبوع');
+      const relMatch = msg.match(/بعد\s+(\d+)\s*(يوم|أيام)/);
+      const relDays  = relMatch ? parseInt(relMatch[1]) : null;
+      const isWeekRange = isRange || (relDays && relDays >= 5);
+
+      if (isWeekRange) {
+        // عرض نطاق أيام
+        const startD = new Date();
+        const endDays = relDays || 7;
+        const endD   = new Date(); endD.setDate(endD.getDate() + endDays);
+        const startStr = makeDate(startD);
+        const endStr   = makeDate(endD);
+        const r = await pool.query('SELECT * FROM tasks WHERE done=false AND date>=$1 AND date<=$2 ORDER BY date,time',[startStr,endStr]);
+        if (!r.rows.length) { await sendWA(from, '📅 ما عندك مهام خلال ' + endDays + ' أيام ✅'); break; }
+        let msg4 = '📅 *مهامك خلال ' + endDays + ' أيام:*\n\n';
+        let lastD4 = '';
+        r.rows.forEach(function(t){
+          const d4 = new Date(t.date+'T12:00:00');
+          const dl4 = dayNamesAr3[d4.getDay()] + ' ' + t.date;
+          if (dl4 !== lastD4) { msg4 += '\n*' + dl4 + ':*\n'; lastD4 = dl4; }
+          const ic4 = t.priority==='urgent'?'🔴 ':(t.type==='meeting'?'📅 ':t.type==='reminder'?'🔔 ':'🔹 ');
+          msg4 += ic4 + '*' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n';
+        });
+        await sendWA(from, msg4.trim());
+        break;
+      }
+
+      // يوم محدد
       let targetD = analysis.date;
       if (!targetD) {
-        // استخرج "بعد X أيام" من الرسالة مباشرة
-        const relMatch = msg.match(/بعد\s+(\d+)\s*(يوم|أيام)/);
-        const dayNames7 = { 'أحد':0,'اثنين':1,'ثلاثاء':2,'أربعاء':3,'خميس':4,'جمعة':5,'سبت':6 };
-        if (msg.includes('بكرة') || msg.includes('بكره') || msg.includes('غداً') || msg.includes('الغد')) {
-          const t = new Date(); t.setDate(t.getDate()+1);
-          targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
-        } else if (msg.includes('بعد بكرة') || msg.includes('بعد بكره') || msg.includes('بعد غد')) {
-          const t = new Date(); t.setDate(t.getDate()+2);
-          targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
-        } else if (relMatch) {
-          const days = parseInt(relMatch[1]);
-          const t = new Date(); t.setDate(t.getDate()+days);
-          targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+        if (msg.includes('بعد بكرة') || msg.includes('بعد بكره') || msg.includes('بعد غد')) {
+          const t = new Date(); t.setDate(t.getDate()+2); targetD = makeDate(t);
+        } else if (msg.includes('بكرة') || msg.includes('بكره') || msg.includes('غداً') || msg.includes('الغد')) {
+          const t = new Date(); t.setDate(t.getDate()+1); targetD = makeDate(t);
+        } else if (relDays) {
+          const t = new Date(); t.setDate(t.getDate()+relDays); targetD = makeDate(t);
         } else {
-          // جرب يوم الأسبوع
           for (const [name, num] of Object.entries(dayNames7)) {
             if (msg.includes(name)) {
               const now3 = new Date();
               let diff = num - now3.getDay();
               if (diff <= 0) diff += 7;
               const t = new Date(now3); t.setDate(now3.getDate()+diff);
-              targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
-              break;
+              targetD = makeDate(t); break;
             }
           }
         }
       }
-      if (!targetD) { await sendWA(from, '❓ ما فهمت اليوم، قول مثلاً "بكرة" أو "بعد يومين"'); break; }
+      if (!targetD) { await sendWA(from, '❓ ما فهمت، مثال: "بكرة" أو "بعد يومين" أو "يوم الأربعاء"'); break; }
       const r = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[targetD]);
       const d2 = new Date(targetD+'T12:00:00');
-      const dayNamesAr3 = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
       const dayLabel3 = dayNamesAr3[d2.getDay()] + ' ' + targetD;
       if (!r.rows.length) { await sendWA(from, '📅 ما عندك مهام يوم ' + dayLabel3 + ' ✅'); break; }
       let list = '📅 *مهام ' + dayLabel3 + ' (' + r.rows.length + '):*\n\n';
@@ -2814,8 +2869,10 @@ async function handleOwner(from, msg) {
       const tl = await buildTasksList(false);
       if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
       if (tl.count === 1) {
-        await deleteTask(tl.tasks[0].id);
-        await sendWA(from, '🗑️ تم حذف *' + tl.tasks[0].title + '*'); break;
+        // تأكيد قبل الحذف
+        userState[from] = { step: 'waiting_delete_confirm', taskId: tl.tasks[0].id, taskTitle: tl.tasks[0].title };
+        await sendWA(from, '🗑️ تأكيد حذف *' + tl.tasks[0].title + '*\n\nأرسل *نعم* للحذف أو *لا* للإلغاء');
+        break;
       }
       await sendWA(from, tl.text + '\n\n🗑️ أرسل رقم المهمة أو *الكل* لحذف كل شيء');
       userState[from] = { step: 'waiting_delete_selection', tasks: tl.tasks };
@@ -2868,6 +2925,7 @@ async function handleOwner(from, msg) {
 
       if (analysis.date && analysis.time) {
         if (type === 'meeting') {
+          // للاجتماع: اسأل عن الموقع أولاً ثم أكّد
           userState[from] = { step: 'waiting_location', taskTitle: title, taskType: 'meeting', taskNote: analysis.note||'', date: analysis.date, time: analysis.time };
           await sendWA(from, '📍 أين موقع الاجتماع؟\nأو أرسل *تخطي*');
         } else {
@@ -3054,6 +3112,19 @@ async function handleOwner(from, msg) {
         list += (i+1) + '. ' + ic + ' *' + t.title + '*' + (t.date?' — '+t.date:'') + (t.done?' ✅':'') + '\n';
       });
       await sendWA(from, list);
+      break;
+    }
+
+    case 'add_note': {
+      const ntitle = analysis.task_title || '';
+      const noteText = analysis.note || msg;
+      if (!ntitle) { await sendWA(from, '❓ حدد اسم المهمة\nمثال: "أضف ملاحظة على اجتماع أحمد: جيب الملفات"'); break; }
+      const r = await pool.query("SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",['%'+ntitle.substring(0,15)+'%']);
+      if (!r.rows.length) { await sendWA(from, '❓ ما لقيت المهمة "' + ntitle + '"'); break; }
+      const t = r.rows[0];
+      const newNote = t.note ? t.note + '\n' + noteText : noteText;
+      await pool.query('UPDATE tasks SET note=$1 WHERE id=$2',[newNote, t.id]);
+      await sendWA(from, '📝 تمت إضافة الملاحظة على *' + t.title + '*:\n' + noteText);
       break;
     }
 
@@ -3249,11 +3320,27 @@ async function handleOwnerState(from, msg, state) {
 
   if (state.step === 'waiting_location') {
     const location = msg === 'تخطي' ? '' : msg;
-    const id = Date.now();
-    await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',[id,state.taskTitle,'meeting',state.date,state.time,state.taskNote||'',location]);
-    let reply = '✅ تم تسجيل الاجتماع!\n📌 *' + state.taskTitle + '*\n⏰ ' + fmt12(state.time) + '\n📅 ' + state.date;
-    if (location) reply += '\n📍 ' + location;
-    await sendWA(from, reply);
+    // تأكيد قبل الحفظ
+    let confirmTxt = '📅 *تأكيد الاجتماع:*\n\n📌 *' + state.taskTitle + '*\n⏰ ' + fmt12(state.time) + '\n📅 ' + state.date;
+    if (location) confirmTxt += '\n📍 ' + location;
+    confirmTxt += '\n\nأرسل *نعم* للتسجيل أو *لا* للإلغاء';
+    await sendWA(from, confirmTxt);
+    userState[from] = { step: 'waiting_meeting_confirm', taskTitle: state.taskTitle, date: state.date, time: state.time, taskNote: state.taskNote||'', location };
+    return;
+  }
+
+  if (state.step === 'waiting_meeting_confirm') {
+    const isYes = ['نعم','اي','أيوه','ايوه','yes','تمام','صح','يلا'].some(function(w){ return msg.includes(w); });
+    if (isYes) {
+      const id = Date.now();
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',[id,state.taskTitle,'meeting',state.date,state.time,state.taskNote||'',state.location||'']);
+      let reply = '✅ تم تسجيل الاجتماع!\n📌 *' + state.taskTitle + '*\n⏰ ' + fmt12(state.time) + '\n📅 ' + state.date;
+      if (state.location) reply += '\n📍 ' + state.location;
+      await sendWA(from, reply);
+      setImmediate(function() { learnFromOwner('أضاف meeting', state.taskTitle, state.taskTitle); });
+    } else {
+      await sendWA(from, '✅ تم إلغاء تسجيل الاجتماع');
+    }
     userState[from] = { step: 'idle' }; return;
   }
 
@@ -3314,6 +3401,17 @@ async function handleOwnerState(from, msg, state) {
       }
     } else { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
     return;
+  }
+
+  if (state.step === 'waiting_delete_confirm') {
+    const isYes = ['نعم','اي','أيوه','ايوه','yes','تمام','يلا'].some(function(w){ return msg.includes(w); });
+    if (isYes) {
+      await deleteTask(state.taskId);
+      await sendWA(from, '🗑️ تم حذف *' + state.taskTitle + '*');
+    } else {
+      await sendWA(from, '✅ تم إلغاء الحذف');
+    }
+    userState[from] = { step: 'idle' }; return;
   }
 
   if (state.step === 'waiting_delete_selection') {
@@ -4296,6 +4394,49 @@ async function saveFileToDrive(title, htmlContent, type) {
     return null;
   }
 }
+
+// ─── Stats API ───────────────────────────────────────────────────────────────
+app.get('/stats', async function(req,res) {
+  try {
+    const today8 = new Date(); today8.setHours(0,0,0,0);
+    const weekAgo3 = new Date(); weekAgo3.setDate(weekAgo3.getDate()-7);
+    const monthAgo = new Date(); monthAgo.setDate(monthAgo.getDate()-30);
+    const todayStr2 = today8.getFullYear()+'-'+String(today8.getMonth()+1).padStart(2,'0')+'-'+String(today8.getDate()).padStart(2,'0');
+    const [pending, overdue, doneWeek, doneMonth, urgent, meetings, visitors, deletedCount] = await Promise.all([
+      pool.query("SELECT COUNT(*) FROM tasks WHERE done=false AND (date IS NULL OR date >= $1)",[todayStr2]),
+      pool.query("SELECT COUNT(*) FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1",[todayStr2]),
+      pool.query("SELECT COUNT(*) FROM tasks WHERE done=true AND created_at >= $1",[weekAgo3]),
+      pool.query("SELECT COUNT(*) FROM tasks WHERE done=true AND created_at >= $1",[monthAgo]),
+      pool.query("SELECT COUNT(*) FROM tasks WHERE done=false AND priority='urgent'"),
+      pool.query("SELECT COUNT(*) FROM tasks WHERE done=false AND type='meeting'"),
+      pool.query("SELECT COUNT(*) FROM visitors"),
+      pool.query("SELECT COUNT(*) FROM deleted_tasks"),
+    ]);
+    res.json({
+      pending: parseInt(pending.rows[0].count),
+      overdue: parseInt(overdue.rows[0].count),
+      done_week: parseInt(doneWeek.rows[0].count),
+      done_month: parseInt(doneMonth.rows[0].count),
+      urgent: parseInt(urgent.rows[0].count),
+      meetings: parseInt(meetings.rows[0].count),
+      visitors: parseInt(visitors.rows[0].count),
+      deleted: parseInt(deletedCount.rows[0].count),
+    });
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+// ─── Search API ───────────────────────────────────────────────────────────────
+app.get('/search', async function(req,res) {
+  try {
+    const q = (req.query.q||'').trim();
+    if (!q) return res.json([]);
+    const r = await pool.query(
+      "SELECT * FROM tasks WHERE LOWER(title) LIKE LOWER($1) OR LOWER(note) LIKE LOWER($1) ORDER BY done,date,time LIMIT 20",
+      ['%'+q+'%']
+    );
+    res.json(r.rows);
+  } catch(e) { res.json([]); }
+});
 
 app.get('/', function(req,res) {
   res.json({ status:'مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
