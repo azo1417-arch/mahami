@@ -3064,13 +3064,24 @@ async function handleOwnerState(from, msg, state) {
       await sendWA(from, '✅ تم إنجاز *' + state.tasks.length + '* مهام 🎉');
       userState[from] = { step: 'idle' }; return;
     }
-    const n = parseInt(msg);
-    if (n >= 1 && n <= state.tasks.length) {
-      await pool.query('UPDATE tasks SET done=true WHERE id=$1',[state.tasks[n-1].id]);
-      await sendWA(from, '✅ *' + state.tasks[n-1].title + '* تم إنجازها 🎉');
-      userState[from] = { step: 'idle' };
-    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
-    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    const numsD = msg.match(/\d+/g);
+    if (numsD && numsD.length > 0) {
+      const valid = numsD.map(Number).filter(function(n){ return n >= 1 && n <= state.tasks.length; });
+      if (valid.length === 0) { await sendWA(from, '❓ أرسل رقم من القائمة'); return; }
+      const done2 = [];
+      for (const n of valid) {
+        await pool.query('UPDATE tasks SET done=true WHERE id=$1',[state.tasks[n-1].id]);
+        done2.push(state.tasks[n-1].title);
+      }
+      if (done2.length === 1) { await sendWA(from, '✅ *' + done2[0] + '* تم إنجازها 🎉'); }
+      else { await sendWA(from, '✅ تم إنجاز:\n' + done2.map(function(t){ return '• *' + t + '*'; }).join('\n')); }
+      const remaining = state.tasks.filter(function(t){ return !done2.includes(t.title); });
+      if (remaining.length > 0) {
+        userState[from] = { step: 'waiting_done_selection', tasks: remaining };
+      } else {
+        userState[from] = { step: 'idle' };
+      }
+    } else { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
     return;
   }
 
@@ -3083,14 +3094,25 @@ async function handleOwnerState(from, msg, state) {
       await sendWA(from, '⏰ تم تأجيل *' + state.tasks.length + '* مهام لبكرة');
       userState[from] = { step: 'idle' }; return;
     }
-    const n = parseInt(msg);
-    if (n >= 1 && n <= state.tasks.length) {
-      const t = state.tasks[n-1];
-      await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tomStr,t.id]);
-      await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لبكرة');
-      userState[from] = { step: 'idle' };
-    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
-    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    const numsP = msg.match(/\d+/g);
+    if (numsP && numsP.length > 0) {
+      const valid = numsP.map(Number).filter(function(n){ return n >= 1 && n <= state.tasks.length; });
+      if (valid.length === 0) { await sendWA(from, '❓ أرسل رقم من القائمة'); return; }
+      const deferred = [];
+      for (const n of valid) {
+        const t = state.tasks[n-1];
+        await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tomStr,t.id]);
+        deferred.push(t.title);
+      }
+      if (deferred.length === 1) { await sendWA(from, '⏰ تم تأجيل *' + deferred[0] + '* لبكرة'); }
+      else { await sendWA(from, '⏰ تم تأجيل:\n' + deferred.map(function(t){ return '• *' + t + '*'; }).join('\n')); }
+      const remaining = state.tasks.filter(function(t){ return !deferred.includes(t.title); });
+      if (remaining.length > 0) {
+        userState[from] = { step: 'waiting_postpone_selection', tasks: remaining };
+      } else {
+        userState[from] = { step: 'idle' };
+      }
+    } else { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
     return;
   }
 
@@ -3101,13 +3123,26 @@ async function handleOwnerState(from, msg, state) {
       await sendWA(from, '🗑️ تم حذف *' + state.tasks.length + '* مهام');
       userState[from] = { step: 'idle' }; return;
     }
-    const n = parseInt(msg);
-    if (n >= 1 && n <= state.tasks.length) {
-      await pool.query('DELETE FROM tasks WHERE id=$1',[state.tasks[n-1].id]);
-      await sendWA(from, '🗑️ تم حذف *' + state.tasks[n-1].title + '*');
-      userState[from] = { step: 'idle' };
-    } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
-    else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
+    // دعم أرقام متعددة أو منفردة
+    const nums = msg.match(/\d+/g);
+    if (nums && nums.length > 0) {
+      const valid = nums.map(Number).filter(function(n){ return n >= 1 && n <= state.tasks.length; });
+      if (valid.length === 0) { await sendWA(from, '❓ أرسل رقم من القائمة'); return; }
+      const deleted = [];
+      for (const n of valid) {
+        await pool.query('DELETE FROM tasks WHERE id=$1',[state.tasks[n-1].id]);
+        deleted.push(state.tasks[n-1].title);
+      }
+      if (deleted.length === 1) { await sendWA(from, '🗑️ تم حذف *' + deleted[0] + '*'); }
+      else { await sendWA(from, '🗑️ تم حذف:\n' + deleted.map(function(t){ return '• *' + t + '*'; }).join('\n')); }
+      // أبقِ الـ state شغّال مع المهام المتبقية (مع تحديث الأرقام)
+      const remaining = state.tasks.filter(function(t){ return !deleted.includes(t.title); });
+      if (remaining.length > 0) {
+        userState[from] = { step: 'waiting_delete_selection', tasks: remaining };
+      } else {
+        userState[from] = { step: 'idle' };
+      }
+    } else { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
     return;
   }
 
@@ -3283,14 +3318,24 @@ async function handleOwnerState(from, msg, state) {
       userState[from] = { step: 'waiting_datetime', taskTitle: state.taskTitle, taskType: state.taskType, taskNote: state.taskNote||'' };
       await sendWA(from, '📅 أرسل التاريخ الجديد:');
     } else {
-      // مو 1 أو 2 — احفظ الـ state مؤقتاً وعالج الطلب ثم أعد التنبيه
-      const savedState = Object.assign({}, state);
-      userState[from] = { step: 'idle' };
-      await handleOwner(from, msg);
-      // أعد الـ state وأرسل التنبيه مرة ثانية
-      userState[from] = savedState;
-      const dayLabels2 = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
-      await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels2[savedState.taskType]||'المهمة') + ' بتاريخ *' + savedState.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
+      const cancelWords = ['الغ','الغي','إلغاء','الغاء','لا','لأ','ما أبغى','وقف'];
+      const isCancel = cancelWords.some(function(w){ return msg.includes(w); });
+      if (isCancel) {
+        // إلغاء المهمة المعلقة
+        userState[from] = { step: 'idle' };
+        await sendWA(from, '✅ تم إلغاء التسجيل');
+      } else {
+        // احفظ الـ state مؤقتاً وعالج الطلب ثم أعد التنبيه
+        const savedState = Object.assign({}, state);
+        userState[from] = { step: 'idle' };
+        await handleOwner(from, msg);
+        // أعد الـ state وأرسل التنبيه مرة ثانية — بس لو ما تغيّر الـ state
+        if (!userState[from] || userState[from].step === 'idle') {
+          userState[from] = savedState;
+          const dayLabels2 = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
+          await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels2[savedState.taskType]||'المهمة') + ' بتاريخ *' + savedState.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد\n❌ الغي — إلغاء التسجيل');
+        }
+      }
     }
     return;
   }
