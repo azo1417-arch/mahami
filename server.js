@@ -549,6 +549,7 @@ async function analyzeOwner(msg, context) {
     '- الغ الإجازة/ألغِ الإجازة = cancel_vacation\n' +
     '- وش عندك متعلقات/وش المجمد/وش جاء بالإجازة = show_vacation_msgs\n' +
     '- رجعت/خلصت = back\n' +
+    '- رجعت من الإجازة/انهِ الإجازة/أنهِ الإجازة = back_from_vacation\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
     '- متى آخر/كم صار = recall\n' +
     '- أضف جهة اتصال [اسم] [رقم] = add_contact (relation_name=الاسم, task_title=الرقم)\n' +
@@ -1377,7 +1378,7 @@ cron.schedule('*/10 * * * * *', async function() {
     const res = await pool.query("SELECT * FROM tasks WHERE status='approved' AND requested_by!='' AND reminded=false AND date=$1 AND time=$2",[today,cur]);
     for (const t of res.rows) {
       await pool.query('UPDATE tasks SET reminded=true WHERE id=$1',[t.id]);
-      await sendWA(t.requested_by, '🔔 تذكيرك: *' + t.title + '*\n_من نواف_ ✨');
+      await sendWA(t.requested_by, '🔔 تذكيرك: *' + t.title + '*');
       await sendWA(PHONE, '📬 تم تذكير *' + t.requested_by_name + '* بـ "' + t.title + '" ✅');
     }
   } catch(e) { console.error('VReminder:', e.message); }
@@ -2142,7 +2143,7 @@ async function handleOwner(from, msg) {
       msgs.forEach(function(m, i) {
         summary += (i+1) + '. 👤 *' + (m.name||m.phone) + '*\n   ' + m.message.substring(0,80) + (m.message.length>80?'...':'') + '\n\n';
       });
-      await sendWA(from, summary.replace('\n\n─────────────\n*وقف* — واصل التجميد\n*نكمل* — أرسلها الحين وانهِ التجميد',''));
+      await sendWA(from, summary.trim());
       userState[from] = { step: 'idle' };
       break;
     }
@@ -2838,7 +2839,7 @@ async function handleOwner(from, msg) {
         query = "SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time";
         params = [today5];
       } else {
-        query = "SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date <= $1) ORDER BY date,time";
+        query = "SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date < $1) ORDER BY date,time";
         params = [targetStr];
       }
       const r = await pool.query(query, params);
@@ -3246,7 +3247,9 @@ async function handleOwnerState(from, msg, state) {
       userState[from] = { step: 'waiting_datetime', taskTitle: state.taskTitle, taskType: state.taskType, taskNote: state.taskNote||'' };
       await sendWA(from, '📅 أرسل التاريخ الجديد:');
     } else {
-      await sendWA(from, '1️⃣ كمّل بنفس التاريخ\n2️⃣ غيّر التاريخ');
+      // مو 1 أو 2 — كسر الـ state وعالج الطلب الجديد
+      userState[from] = { step: 'idle' };
+      await handleOwner(from, msg);
     }
     return;
   }
@@ -3373,7 +3376,7 @@ async function handleVisitor(from, msg) {
   if (onVacation) {
     // الرسائل الشخصية والتذكيرات تكمل طبيعي — فقط الطلبات والأعمال تُجمَّد
     const workWords = ['طلب','اجتماع','لقاء','مقابلة','مشروع','عقد','موافقة','تقرير','عمل','شغل','ملف','مهمة','بخصوص','بتخصوص','موضوع'];
-    const isWorkMsg = workWords.some(function(w){ return msg.includes(w); }) || (analysis && ['task_request','meeting_request','reminder_for_owner'].includes(analysis.intent));
+    const isWorkMsg = workWords.some(function(w){ return msg.includes(w); });
     if (isWorkMsg) {
       await saveVacationMessage(from, visitorName||from, msg);
       if (!sentReminders.has('vac_' + from + '_' + todayStr())) {
