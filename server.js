@@ -560,7 +560,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|stats|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|stats|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -609,6 +609,7 @@ async function analyzeOwner(msg, context) {
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
     '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks\n' +
     '- وش عندي هالأسبوع/مهام الأسبوع/جدول الأسبوع = show_week_full\n' +
+    '- وش عندي بكرة/بعد بكرة/بعد يومين/بعد X أيام/يوم الأحد/يوم الاثنين = show_date (date=التاريخ المحسوب)\n' +
     '- ابحث عن/فين مهمة/وش صار بـ = search_tasks (task_title=الكلمة)\n' +
     '- خلّها عاجل/أولوية عاجلة/مهمة جداً = set_priority (task_title=اسم المهمة, note=urgent)\n' +
     '- إحصائياتي/كم أنجزت/تقريري/وش أنجزت = stats\n' +
@@ -2685,6 +2686,52 @@ async function handleOwner(from, msg) {
         const dayNames = { '0':'أحد','1':'اثنين','2':'ثلاثاء','3':'أربعاء','4':'خميس','5':'جمعة','6':'سبت' };
         const days = t.days ? t.days.split(',').map(function(d){ return dayNames[d]||d; }).join(' و') : 'كل يوم';
         list += (i+1) + '. ' + t.title + ' — ' + days + (t.time?' الساعة '+fmt12(t.time):'') + '\n';
+      });
+      await sendWA(from, list);
+      break;
+    }
+
+    case 'show_date': {
+      // احسب التاريخ المستهدف من الرسالة
+      let targetD = analysis.date;
+      if (!targetD) {
+        // استخرج "بعد X أيام" من الرسالة مباشرة
+        const relMatch = msg.match(/بعد\s+(\d+)\s*(يوم|أيام)/);
+        const dayNames7 = { 'أحد':0,'اثنين':1,'ثلاثاء':2,'أربعاء':3,'خميس':4,'جمعة':5,'سبت':6 };
+        if (msg.includes('بكرة') || msg.includes('بكره') || msg.includes('غداً') || msg.includes('الغد')) {
+          const t = new Date(); t.setDate(t.getDate()+1);
+          targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+        } else if (msg.includes('بعد بكرة') || msg.includes('بعد بكره') || msg.includes('بعد غد')) {
+          const t = new Date(); t.setDate(t.getDate()+2);
+          targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+        } else if (relMatch) {
+          const days = parseInt(relMatch[1]);
+          const t = new Date(); t.setDate(t.getDate()+days);
+          targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+        } else {
+          // جرب يوم الأسبوع
+          for (const [name, num] of Object.entries(dayNames7)) {
+            if (msg.includes(name)) {
+              const now3 = new Date();
+              let diff = num - now3.getDay();
+              if (diff <= 0) diff += 7;
+              const t = new Date(now3); t.setDate(now3.getDate()+diff);
+              targetD = t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')+'-'+String(t.getDate()).padStart(2,'0');
+              break;
+            }
+          }
+        }
+      }
+      if (!targetD) { await sendWA(from, '❓ ما فهمت اليوم، قول مثلاً "بكرة" أو "بعد يومين"'); break; }
+      const r = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[targetD]);
+      const d2 = new Date(targetD+'T12:00:00');
+      const dayNamesAr3 = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+      const dayLabel3 = dayNamesAr3[d2.getDay()] + ' ' + targetD;
+      if (!r.rows.length) { await sendWA(from, '📅 ما عندك مهام يوم ' + dayLabel3 + ' ✅'); break; }
+      let list = '📅 *مهام ' + dayLabel3 + ' (' + r.rows.length + '):*\n\n';
+      r.rows.forEach(function(t,i){
+        const ic = t.priority==='urgent'?'🔴 ':(t.type==='meeting'?'📅 ':t.type==='reminder'?'🔔 ':'🔹 ');
+        list += (i+1) + '. ' + ic + '*' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n';
       });
       await sendWA(from, list);
       break;
