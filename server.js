@@ -2822,14 +2822,31 @@ async function handleOwner(from, msg) {
     }
 
     case 'postpone_all': {
-      const tom = new Date(); tom.setDate(tom.getDate()+1);
-      const tomorrow = tom.getFullYear() + '-' + String(tom.getMonth()+1).padStart(2,'0') + '-' + String(tom.getDate()).padStart(2,'0');
-      const r = await pool.query("SELECT * FROM tasks WHERE done=false AND date<='" + tomorrow + "' ORDER BY date,time");
-      if (!r.rows.length) { await sendWA(from, '📋 ما في مهام معلقة'); break; }
-      for (const t of r.rows) {
-        await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tomorrow,t.id]);
+      // احسب التاريخ المستهدف — بكرة أو بعد بكرة أو تاريخ محدد
+      let daysToAdd = 1;
+      if (msg.includes('بعد بكرة') || msg.includes('بعد بكره') || msg.includes('بعد غد')) daysToAdd = 2;
+      else if (msg.includes('الأسبوع القادم') || msg.includes('الأسبوع الجاي')) daysToAdd = 7;
+      const targetDate = new Date(); targetDate.setDate(targetDate.getDate() + daysToAdd);
+      const targetStr = targetDate.getFullYear() + '-' + String(targetDate.getMonth()+1).padStart(2,'0') + '-' + String(targetDate.getDate()).padStart(2,'0');
+      const targetLabel = daysToAdd === 1 ? 'بكرة' : daysToAdd === 2 ? 'بعد بكرة' : targetStr;
+
+      // حدد أي المهام تأجّل — المتأخرة فقط أو الكل
+      const overdueOnly = msg.includes('متأخر') || msg.includes('المتأخر') || msg.includes('اللي فاتت');
+      const today5 = todayStr();
+      let query, params;
+      if (overdueOnly) {
+        query = "SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time";
+        params = [today5];
+      } else {
+        query = "SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date <= $1) ORDER BY date,time";
+        params = [targetStr];
       }
-      await sendWA(from, '✅ تم تأجيل *' + r.rows.length + '* مهام لبكرة ' + tomorrow + ' 📅');
+      const r = await pool.query(query, params);
+      if (!r.rows.length) { await sendWA(from, '📋 ما في مهام ' + (overdueOnly?'متأخرة':'معلقة')); break; }
+      for (const t of r.rows) {
+        await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[targetStr,t.id]);
+      }
+      await sendWA(from, '✅ تم تأجيل *' + r.rows.length + '* مهام ' + (overdueOnly?'متأخرة ':'') + 'لـ *' + targetLabel + '* ' + targetStr + ' 📅');
       break;
     }
 
