@@ -49,6 +49,23 @@ async function initDB() {
 
   await pool.query("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
   await pool.query("INSERT INTO settings (key,value) VALUES ('busy_mode','false') ON CONFLICT (key) DO NOTHING");
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS vacation (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "start_date TEXT NOT NULL, " +
+    "end_date TEXT NOT NULL, " +
+    "return_date TEXT NOT NULL, " +
+    "active BOOLEAN DEFAULT TRUE, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS vacation_messages (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "phone TEXT NOT NULL, " +
+    "name TEXT DEFAULT '', " +
+    "message TEXT NOT NULL, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
 
   await pool.query(
     "CREATE TABLE IF NOT EXISTS memory (" +
@@ -160,6 +177,14 @@ async function initDB() {
   console.log('✅ DB جاهزة');
 }
 initDB();
+
+
+// ─── تحقق يوم الجمعة ─────────────────────────────────────────────────────────
+function isFriday(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.getDay() === 5;
+}
 
 const sentReminders = new Set();
 const userState = {};
@@ -502,7 +527,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_tasks|done|undo_done|postpone|postpone_all|delete|edit|search|busy|back|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_week|show_tasks|done|undo_done|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -520,6 +545,9 @@ async function analyzeOwner(msg, context) {
     '- مهم جداً: task_title في scheduled_message = نص الرسالة المراد إرسالها فقط (مثل "كيف حالك") وليس الأمر كاملاً\n' +
     '- مهم جداً: "إرسال رسالة لـ جهة/شركة/مكتب" بدون رقم هاتف = add_task وليس send_message\n' +
     '- مشغول/في اجتماع = busy\n' +
+    '- إجازة/اجازة/سأكون في إجازة من/إجازتي من = vacation (date=تاريخ البداية, time=وقت البداية, note=تاريخ النهاية/يوم المباشرة)\n' +
+    '- الغ الإجازة/ألغِ الإجازة = cancel_vacation\n' +
+    '- وش عندك متعلقات/وش المجمد/وش جاء بالإجازة = show_vacation_msgs\n' +
     '- رجعت/خلصت = back\n' +
     '- تذكر/غيرت/اشتريت = remember\n' +
     '- متى آخر/كم صار = recall\n' +
@@ -544,6 +572,11 @@ async function analyzeOwner(msg, context) {
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
     '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks\n' +
     '- أجّل/أجل كل المهام لبكرة/الغد = postpone_all\n' +
+    '- احذف كل المهام/امسح كلها = delete_all\n' +
+    '- احذف المنجزة/امسح المنجزة = delete_done\n' +
+    '- احذف المتأخرة/امسح المتأخرة = delete_overdue\n' +
+    '- نظّف/نظف = delete_done\n' +
+    '- إدارة المهام/اعرض وأدير/أدر المهام = manage_tasks\n' +
     '- إلغاء إنجاز/ما انجزتها/رجّعها = undo_done\n' +
     '- مهم جداً: "ارسل رسالة في اجتماع" أو "ارسل لفلان" = send_message أو scheduled_message وليس add_meeting\n' +
     '- add_meeting فقط لو فيه طلب حقيقي لتحديد موعد لقاء\n' +
@@ -1081,6 +1114,37 @@ async function setBusy(val) {
   await pool.query('INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2',['busy_mode', val?'true':'false']);
 }
 
+
+// ─── نظام الإجازة ────────────────────────────────────────────────────────────
+async function getVacation() {
+  try {
+    const r = await pool.query("SELECT * FROM vacation WHERE active=true ORDER BY created_at DESC LIMIT 1");
+    return r.rows[0] || null;
+  } catch(e) { return null; }
+}
+
+async function isOnVacation() {
+  try {
+    const v = await getVacation();
+    if (!v) return false;
+    const today = todayStr();
+    return today >= v.start_date && today <= v.end_date;
+  } catch(e) { return false; }
+}
+
+async function saveVacationMessage(phone, name, message) {
+  try {
+    await pool.query('INSERT INTO vacation_messages (phone,name,message) VALUES ($1,$2,$3)',[phone, name||'', message]);
+  } catch(e) {}
+}
+
+async function getVacationMessages() {
+  try {
+    const r = await pool.query('SELECT * FROM vacation_messages ORDER BY created_at ASC');
+    return r.rows;
+  } catch(e) { return []; }
+}
+
 // ─── Build Messages ───────────────────────────────────────────────────────
 function buildTaskMsg(t) {
   const icons = { meeting:'📅 اجتماع', task:'✅ مهمة', reminder:'🔔 تذكير' };
@@ -1088,7 +1152,7 @@ function buildTaskMsg(t) {
   if (t.time) msg += '⏰ ' + fmt12(t.time) + '\n';
   if (t.note) msg += '📝 ' + t.note + '\n';
   if (t.location) msg += '📍 ' + t.location + '\n';
-  msg += '\n─────────────\nرد بـ *منجز* لتأكيد الإنجاز\nرد بـ *تأجيل* لتأجيلها ساعة\n\n_مهامي_ ✨';
+  msg += '\n─────────────\nرد بـ *منجز* لتأكيد الإنجاز\nرد بـ *تأجيل* لتأجيلها ساعة\n';
   return msg;
 }
 
@@ -1134,6 +1198,75 @@ function menuMsg(name) {
   return 'هلا ' + name + '! 😊\nوش أقدر أساعدك فيه؟\n\n1️⃣ تسجيل مهمة أو طلب\n2️⃣ جدولة اجتماع\n3️⃣ تذكير عبدالعزيز\n4️⃣ تذكيرك أنت\n\nأرسل الرقم أو اكتب مباشرة 👇';
 }
 
+// ─── Cron: نهاية الإجازة ─────────────────────────────────────────────────────
+cron.schedule('0 9 * * *', async function() {
+  try {
+    const today = todayStr();
+    const v = await getVacation();
+    if (!v || !v.active) return;
+
+    // يوم العودة — أرسل رسالة ترحيب وكل الرسائل المجمدة
+    if (today === v.return_date) {
+      await pool.query("UPDATE vacation SET active=false WHERE id=$1",[v.id]);
+      await setBusy(false);
+
+      // ── رسالة 1: ترحيب ──────────────────────────────────────────────────────
+      const dayName = new Date().toLocaleDateString('ar-SA',{weekday:'long',timeZone:'Asia/Riyadh'});
+      let welcomeBack = '🎉 *أهلاً بعودتك عبدالعزيز!*\n';
+      welcomeBack += '📅 ' + dayName + ' — ' + today;
+      await sendWA(PHONE, welcomeBack);
+
+      // ── رسالة 2: ملخص شامل ───────────────────────────────────────────────
+      const [overdueR, todayR, upcomingR, pendingReqR, frozenMsgs] = await Promise.all([
+        pool.query("SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time",[today]),
+        pool.query("SELECT * FROM tasks WHERE done=false AND date = $1 ORDER BY time",[today]),
+        pool.query("SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date > $1) ORDER BY date,time LIMIT 10",[today]),
+        pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 10"),
+        getVacationMessages()
+      ]);
+
+      let report = '📋 *ملخص ما فاتك:*\n';
+      report += '─────────────\n\n';
+
+      if (frozenMsgs.length) {
+        report += '📬 *رسائل مجمدة (' + frozenMsgs.length + '):*\n';
+        frozenMsgs.forEach(function(m,i){ report += (i+1) + '. 👤 *' + (m.name||m.phone) + '*\n   ' + m.message.substring(0,60) + (m.message.length>60?'...':'') + '\n'; });
+        report += '\n';
+      }
+
+      if (pendingReqR.rows.length) {
+        report += '⏳ *طلبات معلقة (' + pendingReqR.rows.length + '):*\n';
+        pendingReqR.rows.forEach(function(t){ report += '👤 *' + t.requested_by_name + '*: ' + t.title + '\n'; });
+        report += '\n';
+      }
+
+      if (overdueR.rows.length) {
+        report += '⚠️ *مهام متأخرة (' + overdueR.rows.length + '):*\n';
+        overdueR.rows.forEach(function(t){ report += '🔹 *' + t.title + '* — ' + t.date + '\n'; });
+        report += '\n';
+      }
+
+      if (todayR.rows.length) {
+        report += '📌 *مهام اليوم (' + todayR.rows.length + '):*\n';
+        todayR.rows.forEach(function(t){ report += (t.type==='meeting'?'📅':'🔹') + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+        report += '\n';
+      }
+
+      if (upcomingR.rows.length) {
+        report += '🗓️ *القادمة (' + upcomingR.rows.length + '):*\n';
+        upcomingR.rows.forEach(function(t){ report += '🔹 *' + t.title + '* — ' + (t.date||'بدون تاريخ') + '\n'; });
+      }
+
+      if (!frozenMsgs.length && !overdueR.rows.length && !pendingReqR.rows.length && !todayR.rows.length && !upcomingR.rows.length) {
+        report += 'ما في شيء معلق — صفحة بيضاء! 🎉';
+      }
+
+      await sendWA(PHONE, report.trim());
+      if (frozenMsgs.length) await pool.query('DELETE FROM vacation_messages');
+    }
+  } catch(e) { console.error('Vacation return cron:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
 // ─── Cron: تذكيرات متكررة ────────────────────────────────────────────────
 cron.schedule('0 0 * * *', async function() {
   try {
@@ -1167,7 +1300,7 @@ cron.schedule('0 9 * * *', async function() {
         '📌 ' + (doc.title||'وثيقة') + '\n' +
         '📅 تاريخ الانتهاء: ' + doc.expiry_date + '\n' +
         '⚠️ باقي شهر على الانتهاء!\n\n' +
-        '_مهامي_ ✨'
+        ''
       );
     }
   } catch(e) { console.error('DocReminder:', e.message); }
@@ -1219,7 +1352,7 @@ cron.schedule('*/10 * * * * *', async function() {
       let msg = '⏰ *تذكير مسبق — بعد 15 دقيقة*\n\n📌 *' + t.title + '*\n🕐 ' + fmt12(t.time) + '\n';
       if (t.note) msg += '📝 ' + t.note + '\n';
       if (t.location) msg += '📍 ' + t.location + '\n';
-      msg += '\n_مهامي_ ✨';
+      msg += '';
       await sendWA(PHONE, msg);
     }
   } catch(e) { console.error('Pre15:', e.message); }
@@ -1233,7 +1366,7 @@ cron.schedule('*/10 * * * * *', async function() {
         sentReminders.add('mtg60_'+t.id);
         let msg = '📅 *تأكيد اجتماع — بعد ساعة*\n\n📌 *' + t.title + '*\n⏰ ' + fmt12(t.time) + '\n';
         if (t.location) msg += '📍 ' + t.location + '\n';
-        msg += '\nاستعد 💼\n_مهامي_ ✨';
+        msg += '\nاستعد 💼';
         await sendWA(PHONE, msg);
       }
     }
@@ -1282,56 +1415,131 @@ cron.schedule('* * * * *', async function() {
   } catch(e) { console.error('daily_reminders cron:', e.message); }
 }, { timezone: 'Asia/Riyadh' });
 
-// ─── Cron: ملخص صباحي ذكي 8 ص ───────────────────────────────────────────
-cron.schedule('0 8 * * *', async function() {
+// ─── Cron: ملخص صباحي 8 ص ────────────────────────────────────────────────
+cron.schedule('0 9 * * *', async function() {
   const today = todayStr();
   try {
-    const [todayTasks, pendingReq, overdue] = await Promise.all([
+    const [todayTasks, pendingReq, overdue, doneTasks] = await Promise.all([
       pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[today]),
       pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC LIMIT 5"),
-      pool.query('SELECT * FROM tasks WHERE done=false AND date<$1 ORDER BY date,time LIMIT 5',[today])
+      pool.query('SELECT * FROM tasks WHERE done=false AND date<$1 ORDER BY date,time LIMIT 10',[today]),
+      pool.query("SELECT * FROM tasks WHERE done=true AND DATE(created_at AT TIME ZONE 'Asia/Riyadh') = $1 ORDER BY created_at DESC",[today])
     ]);
 
-    // اسأل نواف يبني الملخص الذكي
-    const tasksList  = todayTasks.rows.map(function(t){ return t.title + (t.time?' — '+fmt12(t.time):'') + (t.type==='meeting'?' (اجتماع)':''); }).join('\n');
-    const reqList    = pendingReq.rows.map(function(t){ return t.requested_by_name + ': ' + t.title; }).join('\n');
-    const overdueList= overdue.rows.map(function(t){ return t.title + ' — ' + t.date; }).join('\n');
+    let msg = '🌅 *صباح الخير عبدالعزيز!*
+';
+    msg += '📅 ' + new Date().toLocaleDateString('ar-SA',{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone:'Asia/Riyadh'}) + '
+';
+    msg += '─────────────
 
-    const prompt =
-      'أنت نواف، ابن ملخص صباحي ذكي لعبدالعزيز.\n' +
-      'تكلم بعامية نجدية: "ابشر"، "يوم مبارك"، "عندك كذا"\n\n' +
-      'مهام اليوم:\n' + (tasksList||'ما في مهام') + '\n\n' +
-      'طلبات معلقة:\n' + (reqList||'ما في طلبات') + '\n\n' +
-      'متأخرة:\n' + (overdueList||'ما في') + '\n\n' +
-      'اكتب ملخص مختصر وذكي — أهم شيء أولاً، لا تعداد ممل.\n' +
-      'إذا عنده اجتماعات نبهه خاص. إذا في طلبات معلقة ذكره.\n' +
-      'لا تزيد عن 10 أسطر.';
+';
 
-    const summary = await callAI('claude-sonnet-4-20250514', 500, prompt);
-    await sendWA(PHONE, '🌅 ' + (summary || 'صباح الخير عبدالعزيز!'));
+    if (overdue.rows.length) {
+      msg += '⚠️ *متأخرة (' + overdue.rows.length + '):*
+';
+      overdue.rows.forEach(function(t){ msg += '🔹 *' + t.title + '* — ' + t.date + '
+'; });
+      msg += '
+';
+    }
+
+    if (todayTasks.rows.length) {
+      msg += '📌 *مهام اليوم (' + todayTasks.rows.length + '):*
+';
+      todayTasks.rows.forEach(function(t){
+        const ic = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹';
+        msg += ic + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '
+';
+      });
+      msg += '
+';
+    } else {
+      msg += '📌 *مهام اليوم:* ما في مهام مجدولة
+
+';
+    }
+
+    if (pendingReq.rows.length) {
+      msg += '📬 *طلبات معلقة (' + pendingReq.rows.length + '):*
+';
+      pendingReq.rows.forEach(function(t){ msg += '👤 ' + t.requested_by_name + ': ' + t.title + '
+'; });
+      msg += '
+';
+    }
+
+    msg += '';
+    await sendWA(PHONE, msg);
   } catch(e) { console.error('Morning:', e.message); }
 }, { timezone: 'Asia/Riyadh' });
 
-// ─── Cron: تقرير أسبوعي جمعة 5 م ────────────────────────────────────────
-cron.schedule('0 17 * * 5', async function() {
+// ─── Cron: تقرير أسبوعي خميس 7 م ────────────────────────────────────────
+cron.schedule('0 19 * * 4', async function() {
   try {
     const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-7);
     const wa    = weekAgo.getFullYear() + '-' + String(weekAgo.getMonth()+1).padStart(2,'0') + '-' + String(weekAgo.getDate()).padStart(2,'0');
     const today = todayStr();
-    const [total, approved, rejected, pending, visitors] = await Promise.all([
-      pool.query('SELECT COUNT(*) FROM tasks WHERE created_at>=$1',[wa]),
-      pool.query("SELECT COUNT(*) FROM tasks WHERE status='approved' AND created_at>=$1",[wa]),
-      pool.query("SELECT COUNT(*) FROM tasks WHERE status='rejected' AND created_at>=$1",[wa]),
-      pool.query("SELECT COUNT(*) FROM tasks WHERE status='pending' AND done=false"),
+    const [doneW, pendingAll, overdueAll, visitorReqs, visitors] = await Promise.all([
+      pool.query("SELECT * FROM tasks WHERE done=true AND created_at>=$1 ORDER BY created_at DESC",[wa]),
+      pool.query("SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date >= $1) ORDER BY date,time",[today]),
+      pool.query("SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date",[today]),
+      pool.query("SELECT COUNT(*) FROM tasks WHERE requested_by!='' AND created_at>=$1",[wa]),
       pool.query('SELECT COUNT(*) FROM visitors WHERE created_at>=$1',[wa]),
     ]);
-    let msg = '📊 *تقرير الأسبوع*\n📅 ' + wa + ' ← ' + today + '\n─────────────\n\n';
-    msg += '📬 طلبات وصلت: *' + total.rows[0].count + '*\n';
-    msg += '✅ اعتمدت: *' + approved.rows[0].count + '*\n';
-    msg += '❌ رفضت: *' + rejected.rows[0].count + '*\n';
-    msg += '⏳ معلقة: *' + pending.rows[0].count + '*\n';
-    msg += '👤 زوار جدد: *' + visitors.rows[0].count + '*\n';
-    msg += '\n_مهامي_ ✨';
+
+    const total = doneW.rows.length + pendingAll.rows.length + overdueAll.rows.length;
+    const pct = total > 0 ? Math.round(doneW.rows.length / total * 100) : 0;
+
+    let msg = '📊 *تقرير الأسبوع*
+';
+    msg += '📅 ' + wa + ' ← ' + today + '
+';
+    msg += '─────────────
+
+';
+
+    msg += '✅ *منجزة (' + doneW.rows.length + '):*
+';
+    if (doneW.rows.length) {
+      doneW.rows.slice(0,8).forEach(function(t){ msg += '  ~' + t.title + '~
+'; });
+      if (doneW.rows.length > 8) msg += '  و' + (doneW.rows.length-8) + ' أخرى...
+';
+    } else { msg += '  لا يوجد
+'; }
+    msg += '
+';
+
+    if (overdueAll.rows.length) {
+      msg += '⚠️ *متأخرة (' + overdueAll.rows.length + '):*
+';
+      overdueAll.rows.forEach(function(t){ msg += '  🔹 ' + t.title + ' — ' + t.date + '
+'; });
+      msg += '
+';
+    }
+
+    if (pendingAll.rows.length) {
+      msg += '🗓️ *معلقة (' + pendingAll.rows.length + '):*
+';
+      pendingAll.rows.slice(0,5).forEach(function(t){ msg += '  🔹 ' + t.title + (t.date?' — '+t.date:'') + '
+'; });
+      if (pendingAll.rows.length > 5) msg += '  و' + (pendingAll.rows.length-5) + ' أخرى...
+';
+      msg += '
+';
+    }
+
+    msg += '─────────────
+';
+    msg += '📈 نسبة الإنجاز: *' + pct + '%*
+';
+    msg += '👤 زوار جدد: *' + visitors.rows[0].count + '*
+';
+    msg += '📬 طلبات زوار: *' + visitorReqs.rows[0].count + '*
+';
+    msg += '
+';
     await sendWA(PHONE, msg);
     // تعلم أسبوعي شامل في الخلفية
     const recent = await pool.query("SELECT * FROM tasks WHERE requested_by!='' AND created_at>=$1 ORDER BY created_at DESC LIMIT 30",[wa]);
@@ -1728,6 +1936,47 @@ async function handleVisitorFile(from, fileUrl, fileType, caption) {
   }
 }
 
+
+// ─── عرض المهام المقسمة (مشترك) ─────────────────────────────────────────────
+async function buildTasksList(includeTitle) {
+  const today = todayStr();
+  const [overdueR, todayR, upcomingR] = await Promise.all([
+    pool.query("SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time",[today]),
+    pool.query("SELECT * FROM tasks WHERE done=false AND date = $1 ORDER BY time",[today]),
+    pool.query("SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date > $1) ORDER BY date,time LIMIT 15",[today])
+  ]);
+  const all = [...overdueR.rows, ...todayR.rows, ...upcomingR.rows];
+  if (!all.length) return { text: '📋 ما عندك مهام معلقة ✅', tasks: [], count: 0 };
+  const ic = function(t){ return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹'; };
+  let i = 0;
+  let txt = includeTitle ? '📋 *مهامك:*
+
+' : '';
+  if (overdueR.rows.length) {
+    txt += '⚠️ *متأخرة (' + overdueR.rows.length + '):*
+';
+    overdueR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '* — ' + t.date + '
+'; });
+    txt += '
+';
+  }
+  if (todayR.rows.length) {
+    txt += '📌 *اليوم (' + todayR.rows.length + '):*
+';
+    todayR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '
+'; });
+    txt += '
+';
+  }
+  if (upcomingR.rows.length) {
+    txt += '🗓️ *القادمة (' + upcomingR.rows.length + '):*
+';
+    upcomingR.rows.forEach(function(t){ i++; txt += i + '. ' + ic(t) + ' *' + t.title + '* — ' + (t.date||'بدون تاريخ') + '
+'; });
+  }
+  return { text: txt.trim(), tasks: all, count: all.length };
+}
+
 // ─── Handle Owner ─────────────────────────────────────────────────────────
 async function handleOwner(from, msg) {
   const state = userState[from] || { step: 'idle' };
@@ -1922,6 +2171,50 @@ async function handleOwner(from, msg) {
       } else {
         await sendWA(from, '❓ ما عرفت لمن أرسل، أضف الرقم بـ "أضف جهة اتصال [الاسم] [الرقم]"');
       }
+      break;
+    }
+
+    case 'vacation': {
+      userState[from] = { step: 'waiting_vacation_dates' };
+      await sendWA(from, '🏖️ أهلاً بوضع الإجازة!\n\nأرسل تفاصيل إجازتك بهذا الشكل:\n\n*من: 2026-04-15*\n*إلى: 2026-04-22*\n*مباشرة: 2026-04-23*');
+      break;
+    }
+
+    case 'show_vacation_msgs': {
+      const msgs = await getVacationMessages();
+      if (!msgs.length) { await sendWA(from, '📭 ما في رسائل مجمدة'); break; }
+      let summary = '📬 *رسائل مجمدة (' + msgs.length + '):*\n\n';
+      msgs.forEach(function(m, i) {
+        summary += (i+1) + '. 👤 *' + (m.name||m.phone) + '*\n   ' + m.message.substring(0,80) + (m.message.length>80?'...':'') + '\n\n';
+      });
+      await sendWA(from, summary.replace('\n\n─────────────\n*وقف* — واصل التجميد\n*نكمل* — أرسلها الحين وانهِ التجميد',''));
+      userState[from] = { step: 'idle' };
+      break;
+    }
+
+    case 'back_from_vacation': {
+      // إنهاء الإجازة فعلاً — فقط لو قال صريح إنه رجع
+      const frozenMsgs = await getVacationMessages();
+      await pool.query("UPDATE vacation SET active=false WHERE active=true");
+      await setBusy(false);
+      if (frozenMsgs.length > 0) {
+        let summary = '📬 *رسائل أثناء إجازتك (' + frozenMsgs.length + '):*\n\n';
+        frozenMsgs.forEach(function(m, i) {
+          summary += (i+1) + '. 👤 *' + (m.name||m.phone) + '*\n   ' + m.message.substring(0,80) + (m.message.length>80?'...':'') + '\n\n';
+        });
+        await sendWA(from, summary);
+        await pool.query('DELETE FROM vacation_messages');
+      }
+      await sendWA(from, '✅ أهلاً بعودتك! البوت رجع للعمل الطبيعي 🎉');
+      break;
+    }
+
+    case 'cancel_vacation': {
+      const v = await getVacation();
+      if (!v) { await sendWA(from, '❓ ما عندك إجازة مفعّلة'); break; }
+      await pool.query("UPDATE vacation SET active=false WHERE id=$1",[v.id]);
+      await setBusy(false);
+      await sendWA(from, '✅ تم إلغاء الإجازة');
       break;
     }
 
@@ -2352,77 +2645,97 @@ async function handleOwner(from, msg) {
     }
 
     case 'show_tasks': {
-      const r = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
-      if (!r.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); break; }
-      let list = '📋 *مهامك المعلقة:*\n\n';
-      r.rows.forEach(function(t,i) {
-        list += (i+1) + '. ' + (t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅') + ' *' + t.title + '*' +
-          (t.time?'\n   ⏰ '+fmt12(t.time):'') + ' — ' + (t.date||'بدون تاريخ') +
-          (t.requested_by_name?' (من '+t.requested_by_name+')':'') + '\n\n';
-      });
-      await sendWA(from, list);
+      const today2 = todayStr();
+      const [overdueR, todayR, upcomingR, doneR] = await Promise.all([
+        pool.query("SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time",[today2]),
+        pool.query("SELECT * FROM tasks WHERE done=false AND date = $1 ORDER BY time",[today2]),
+        pool.query("SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date > $1) ORDER BY date,time LIMIT 10",[today2]),
+        pool.query("SELECT * FROM tasks WHERE done=true ORDER BY created_at DESC LIMIT 5")
+      ]);
+      const totalPending = overdueR.rows.length + todayR.rows.length + upcomingR.rows.length;
+      if (!totalPending && !doneR.rows.length) { await sendWA(from, '📋 ما عندك مهام ✅'); break; }
+      const icon = function(t) { return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹'; };
+      const line = function(t) {
+        return icon(t) + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + (t.date && t.date!==today2?' ('+t.date+')':'') + '\n';
+      };
+      let msg2 = '';
+      if (overdueR.rows.length) {
+        msg2 += '⚠️ *متأخرة (' + overdueR.rows.length + '):*\n';
+        overdueR.rows.forEach(function(t){ msg2 += line(t); });
+        msg2 += '\n';
+      }
+      if (todayR.rows.length) {
+        msg2 += '📌 *اليوم (' + todayR.rows.length + '):*\n';
+        todayR.rows.forEach(function(t){ msg2 += line(t); });
+        msg2 += '\n';
+      }
+      if (upcomingR.rows.length) {
+        msg2 += '🗓️ *القادمة (' + upcomingR.rows.length + '):*\n';
+        upcomingR.rows.forEach(function(t){ msg2 += line(t); });
+        msg2 += '\n';
+      }
+      if (doneR.rows.length) {
+        msg2 += '✅ *المنجزة (' + doneR.rows.length + '):*\n';
+        doneR.rows.forEach(function(t){ msg2 += '~' + t.title + '~\n'; });
+      }
+      await sendWA(from, msg2.trim());
       break;
     }
 
     case 'done': {
-      const r = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
-      if (!r.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); break; }
-      if (r.rows.length === 1) {
-        await pool.query('UPDATE tasks SET done=true WHERE id=$1',[r.rows[0].id]);
-        await sendWA(from, '✅ *' + r.rows[0].title + '* تم إنجازها 🎉'); break;
+      const tl = await buildTasksList(false);
+      if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
+      if (tl.count === 1) {
+        await pool.query('UPDATE tasks SET done=true WHERE id=$1',[tl.tasks[0].id]);
+        await sendWA(from, '✅ *' + tl.tasks[0].title + '* تم إنجازها 🎉'); break;
       }
-      let list = '✅ *أي مهمة أنجزت؟*\n\n';
-      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
-      await sendWA(from, list + '\nأرسل الرقم');
-      userState[from] = { step: 'waiting_done_selection', tasks: r.rows };
+      await sendWA(from, tl.text + '
+
+✅ أرسل رقم المهمة أو *الكل*');
+      userState[from] = { step: 'waiting_done_selection', tasks: tl.tasks };
       break;
     }
 
     case 'postpone': {
-      const r = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
-      if (!r.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); break; }
-      if (r.rows.length === 1) {
-        const t = r.rows[0];
-        if (!t.time) { await sendWA(from, '❓ هذه المهمة ما عندها وقت محدد'); break; }
-        const [h,m] = t.time.split(':').map(Number);
-        const d = new Date(); d.setHours(h+1,m);
-        const nt = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-        await pool.query('UPDATE tasks SET time=$1,reminded=false,reminded_pre=false WHERE id=$2',[nt,t.id]);
-        await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لـ ' + fmt12(nt)); break;
+      const tl = await buildTasksList(false);
+      if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
+      if (tl.count === 1) {
+        const tom0 = new Date(); tom0.setDate(tom0.getDate()+1);
+        const tom0Str = tom0.getFullYear() + '-' + String(tom0.getMonth()+1).padStart(2,'0') + '-' + String(tom0.getDate()).padStart(2,'0');
+        await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tom0Str,tl.tasks[0].id]);
+        await sendWA(from, '⏰ تم تأجيل *' + tl.tasks[0].title + '* لبكرة'); break;
       }
-      let list = '⏰ *أي مهمة تريد تأجيلها؟*\n\n';
-      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
-      await sendWA(from, list + '\nأرسل الرقم');
-      userState[from] = { step: 'waiting_postpone_selection', tasks: r.rows };
+      await sendWA(from, tl.text + '
+
+⏰ أرسل رقم المهمة أو *الكل* لتأجيل كل شيء لبكرة');
+      userState[from] = { step: 'waiting_postpone_selection', tasks: tl.tasks };
       break;
     }
 
     case 'delete': {
-      const r = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
-      if (!r.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); break; }
-      if (r.rows.length === 1) {
-        await pool.query('DELETE FROM tasks WHERE id=$1',[r.rows[0].id]);
-        await sendWA(from, '🗑️ تم حذف *' + r.rows[0].title + '*'); break;
+      const tl = await buildTasksList(false);
+      if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
+      if (tl.count === 1) {
+        await pool.query('DELETE FROM tasks WHERE id=$1',[tl.tasks[0].id]);
+        await sendWA(from, '🗑️ تم حذف *' + tl.tasks[0].title + '*'); break;
       }
-      let list = '🗑️ *أي مهمة تريد حذفها؟*\n\n';
-      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*' + (t.date?' — '+t.date:'') + '\n'; });
-      await sendWA(from, list + '\nأرسل الرقم');
-      userState[from] = { step: 'waiting_delete_selection', tasks: r.rows };
+      await sendWA(from, tl.text + '
+
+🗑️ أرسل رقم المهمة أو *الكل* لحذف كل شيء');
+      userState[from] = { step: 'waiting_delete_selection', tasks: tl.tasks };
       break;
     }
 
     case 'edit': {
-      const r = await pool.query('SELECT * FROM tasks WHERE done=false ORDER BY date,time LIMIT 10');
-      if (!r.rows.length) { await sendWA(from, '📋 لا توجد مهام ✅'); break; }
-      if (r.rows.length === 1) {
-        const t = r.rows[0];
+      const tl = await buildTasksList(false);
+      if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
+      if (tl.count === 1) {
+        const t = tl.tasks[0];
         userState[from] = { step: 'waiting_edit_field', task: t };
         await sendWA(from, '✏️ *تعديل: ' + t.title + '*\n\n1. العنوان\n2. الوقت\n3. التاريخ\n4. الملاحظة' + (t.type==='meeting'?'\n5. الموقع':'') + '\n\nأرسل الرقم'); break;
       }
-      let list = '✏️ *أي مهمة تريد تعديلها؟*\n\n';
-      r.rows.forEach(function(t,i) { list += (i+1) + '. *' + t.title + '*\n'; });
-      await sendWA(from, list + '\nأرسل الرقم');
-      userState[from] = { step: 'waiting_edit_selection', tasks: r.rows };
+      await sendWA(from, tl.text + '\n\n✏️ أرسل رقم المهمة اللي تبي تعدلها');
+      userState[from] = { step: 'waiting_edit_selection', tasks: tl.tasks };
       break;
     }
 
@@ -2463,6 +2776,65 @@ async function handleOwner(from, msg) {
         userState[from] = { step: 'waiting_datetime', taskTitle: title, taskType: type, taskNote: analysis.note||'' };
         await sendWA(from, '📌 *' + title + '*\n\n❓ متى وفي أي وقت؟');
       }
+      break;
+    }
+
+    case 'delete_all': {
+      const r = await pool.query('SELECT COUNT(*) FROM tasks');
+      const cnt = parseInt(r.rows[0].count);
+      if (!cnt) { await sendWA(from, '📋 ما في مهام أحذفها'); break; }
+      userState[from] = { step: 'waiting_confirm_delete_all', count: cnt };
+      await sendWA(from, '⚠️ تأكيد: تبي أحذف *' + cnt + '* مهمة؟\n\nأرسل *نعم* للتأكيد أو *لا* للإلغاء');
+      break;
+    }
+
+    case 'delete_done': {
+      const r = await pool.query("DELETE FROM tasks WHERE done=true RETURNING id");
+      const cnt = r.rows.length;
+      if (!cnt) { await sendWA(from, '✅ ما في مهام منجزة أحذفها'); break; }
+      await sendWA(from, '🗑️ تم حذف *' + cnt + '* مهمة منجزة ✅');
+      break;
+    }
+
+    case 'delete_overdue': {
+      const today3 = todayStr();
+      const r = await pool.query("DELETE FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 RETURNING id",[today3]);
+      const cnt = r.rows.length;
+      if (!cnt) { await sendWA(from, '✅ ما في مهام متأخرة'); break; }
+      await sendWA(from, '🗑️ تم حذف *' + cnt + '* مهمة متأخرة ✅');
+      break;
+    }
+
+    case 'manage_tasks': {
+      const today4 = todayStr();
+      const [overdueR2, todayR2, upcomingR2] = await Promise.all([
+        pool.query("SELECT * FROM tasks WHERE done=false AND date IS NOT NULL AND date < $1 ORDER BY date,time",[today4]),
+        pool.query("SELECT * FROM tasks WHERE done=false AND date = $1 ORDER BY time",[today4]),
+        pool.query("SELECT * FROM tasks WHERE done=false AND (date IS NULL OR date > $1) ORDER BY date,time LIMIT 15",[today4])
+      ]);
+      const allTasks = [...overdueR2.rows, ...todayR2.rows, ...upcomingR2.rows];
+      if (!allTasks.length) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
+      const icon2 = function(t) { return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅'; };
+      let list2 = '📋 *كل مهامك — اختار رقم:*\n\n';
+      if (overdueR2.rows.length) {
+        list2 += '⚠️ *متأخرة:*\n';
+        overdueR2.rows.forEach(function(t,i){ list2 += (i+1) + '. ' + icon2(t) + ' *' + t.title + '* — ' + t.date + '\n'; });
+        list2 += '\n';
+      }
+      const offset = overdueR2.rows.length;
+      if (todayR2.rows.length) {
+        list2 += '📌 *اليوم:*\n';
+        todayR2.rows.forEach(function(t,i){ list2 += (offset+i+1) + '. ' + icon2(t) + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+        list2 += '\n';
+      }
+      const offset2 = offset + todayR2.rows.length;
+      if (upcomingR2.rows.length) {
+        list2 += '🗓️ *القادمة:*\n';
+        upcomingR2.rows.forEach(function(t,i){ list2 += (offset2+i+1) + '. ' + icon2(t) + ' *' + t.title + '* — ' + (t.date||'بدون تاريخ') + '\n'; });
+      }
+      list2 += '\n─────────────\nأرسل رقم المهمة + الإجراء:\n✅ *3 منجز* | ✏️ *3 عدّل* | 🗑️ *3 احذف* | ⏰ *3 أجّل*';
+      await sendWA(from, list2);
+      userState[from] = { step: 'waiting_manage_action', tasks: allTasks };
       break;
     }
 
@@ -2509,7 +2881,7 @@ async function handleOwner(from, msg) {
         '• "تذكر إني غيرت زيت السيارة"\n' +
         '• "أضف موعد متاح بكرة 3"\n' +
         '• أي سؤال في أي موضوع 😊\n\n' +
-        '_مهامي_ ✨'
+        ''
       );
       break;
     }
@@ -2646,6 +3018,12 @@ async function handleOwnerState(from, msg, state) {
   }
 
   if (state.step === 'waiting_done_selection') {
+    const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
+    if (isAll) {
+      for (const t of state.tasks) await pool.query('UPDATE tasks SET done=true WHERE id=$1',[t.id]);
+      await sendWA(from, '✅ تم إنجاز *' + state.tasks.length + '* مهام 🎉');
+      userState[from] = { step: 'idle' }; return;
+    }
     const n = parseInt(msg);
     if (n >= 1 && n <= state.tasks.length) {
       await pool.query('UPDATE tasks SET done=true WHERE id=$1',[state.tasks[n-1].id]);
@@ -2657,15 +3035,19 @@ async function handleOwnerState(from, msg, state) {
   }
 
   if (state.step === 'waiting_postpone_selection') {
+    const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
+    const tomD = new Date(); tomD.setDate(tomD.getDate()+1);
+    const tomStr = tomD.getFullYear() + '-' + String(tomD.getMonth()+1).padStart(2,'0') + '-' + String(tomD.getDate()).padStart(2,'0');
+    if (isAll) {
+      for (const t of state.tasks) await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tomStr,t.id]);
+      await sendWA(from, '⏰ تم تأجيل *' + state.tasks.length + '* مهام لبكرة');
+      userState[from] = { step: 'idle' }; return;
+    }
     const n = parseInt(msg);
     if (n >= 1 && n <= state.tasks.length) {
       const t = state.tasks[n-1];
-      if (!t.time) { await sendWA(from, '❓ هذه المهمة ما عندها وقت'); userState[from] = { step: 'idle' }; return; }
-      const [h,m2] = t.time.split(':').map(Number);
-      const d = new Date(); d.setHours(h+1,m2);
-      const nt = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-      await pool.query('UPDATE tasks SET time=$1,reminded=false WHERE id=$2',[nt,t.id]);
-      await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لـ ' + fmt12(nt));
+      await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tomStr,t.id]);
+      await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لبكرة');
       userState[from] = { step: 'idle' };
     } else if (isNaN(n)) { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
     else { await sendWA(from, '❓ أرسل رقم من القائمة'); }
@@ -2673,6 +3055,12 @@ async function handleOwnerState(from, msg, state) {
   }
 
   if (state.step === 'waiting_delete_selection') {
+    const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
+    if (isAll) {
+      for (const t of state.tasks) await pool.query('DELETE FROM tasks WHERE id=$1',[t.id]);
+      await sendWA(from, '🗑️ تم حذف *' + state.tasks.length + '* مهام');
+      userState[from] = { step: 'idle' }; return;
+    }
     const n = parseInt(msg);
     if (n >= 1 && n <= state.tasks.length) {
       await pool.query('DELETE FROM tasks WHERE id=$1',[state.tasks[n-1].id]);
@@ -2794,6 +3182,122 @@ async function handleOwnerState(from, msg, state) {
     return;
   }
 
+  if (state.step === 'waiting_vacation_dates') {
+    // استخرج التواريخ من الرسالة
+    const dates = msg.match(/\d{4}-\d{2}-\d{2}/g);
+    if (!dates || dates.length < 2) {
+      await sendWA(from, '❓ أرسل التواريخ بهذا الشكل:\n\nمن: 2026-04-15\nإلى: 2026-04-22\nمباشرة: 2026-04-23');
+      return;
+    }
+    const startDate  = dates[0];
+    const endDate    = dates[1];
+    const returnDate = dates[2] || (function(){
+      const d = new Date(endDate); d.setDate(d.getDate()+1);
+      return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    })();
+
+    // أوقف أي إجازة سابقة
+    await pool.query("UPDATE vacation SET active=false WHERE active=true").catch(()=>{});
+    // احذف الرسائل المجمدة القديمة
+    await pool.query("DELETE FROM vacation_messages").catch(()=>{});
+    // أضف الإجازة
+    await pool.query('INSERT INTO vacation (start_date,end_date,return_date) VALUES ($1,$2,$3)',[startDate,endDate,returnDate]);
+    // فعّل وضع الغياب
+    await setBusy(true);
+
+    userState[from] = { step: 'idle' };
+    await sendWA(from,
+      '🏖️ *تم تفعيل وضع الإجازة!*\n\n' +
+      '📅 من: *' + startDate + '*\n' +
+      '📅 إلى: *' + endDate + '*\n' +
+      '🏢 المباشرة: *' + returnDate + '*\n\n' +
+      '✅ أثناء إجازتك:\n' +
+      '• الزوار سيُبلَّغون إنك في إجازة\n' +
+      '• رسائلهم وطلباتهم تُجمَّد\n' +
+      '• يوم ' + returnDate + ' تصلك كل الرسائل دفعة وحدة'
+    );
+    return;
+  }
+
+  if (state.step === 'waiting_friday_confirm') {
+    const choice = msg.trim();
+    const isKeep = choice === '1' || choice.includes('كمّل') || choice.includes('كمل') || choice.includes('نعم') || choice.includes('اي');
+    const isChange = choice === '2' || choice.includes('غيّر') || choice.includes('غير');
+    if (isKeep) {
+      // احفظ بنفس التاريخ
+      const { taskTitle, taskType, taskNote, date, time } = state;
+      if (taskType === 'meeting') {
+        userState[from] = { step: 'waiting_location', taskTitle, taskType, taskNote: taskNote||'', date, time };
+        await sendWA(from, '📍 أين موقع الاجتماع?\nأو أرسل *تخطي*');
+      } else if (date && time) {
+        const id = Date.now();
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',[id,taskTitle,taskType,date,time,taskNote||'','']);
+        await sendWA(from, '✅ تم التسجيل!\n📌 *' + taskTitle + '*\n⏰ ' + fmt12(time) + '\n📅 ' + date);
+      } else {
+        userState[from] = { step: 'waiting_datetime', taskTitle, taskType, taskNote: taskNote||'' };
+        await sendWA(from, '📌 *' + taskTitle + '*\n\n❓ متى وفي أي وقت?');
+        return;
+      }
+      userState[from] = { step: 'idle' };
+    } else if (isChange) {
+      userState[from] = { step: 'waiting_datetime', taskTitle: state.taskTitle, taskType: state.taskType, taskNote: state.taskNote||'' };
+      await sendWA(from, '📅 أرسل التاريخ الجديد:');
+    } else {
+      await sendWA(from, '1️⃣ كمّل بنفس التاريخ\n2️⃣ غيّر التاريخ');
+    }
+    return;
+  }
+
+  if (state.step === 'waiting_confirm_delete_all') {
+    const isYes = ['نعم','اي','أيوه','ايوه','yes','تمام','موافق'].some(function(w){ return msg.includes(w); });
+    if (isYes) {
+      const r = await pool.query('DELETE FROM tasks RETURNING id');
+      await sendWA(from, '🗑️ تم حذف *' + r.rows.length + '* مهمة ✅');
+    } else {
+      await sendWA(from, '✅ تم إلغاء الحذف');
+    }
+    userState[from] = { step: 'idle' }; return;
+  }
+
+  if (state.step === 'waiting_manage_action') {
+    const match = msg.trim().match(/^(\d+)\s*(.+)$/);
+    if (!match) {
+      // لو مو رقم + أمر — اخرج
+      userState[from] = { step: 'idle' };
+      await handleOwner(from, msg);
+      return;
+    }
+    const n = parseInt(match[1]);
+    const action = match[2].trim();
+    if (n < 1 || n > state.tasks.length) { await sendWA(from, '❓ رقم غير صحيح'); return; }
+    const t = state.tasks[n-1];
+    const isDone   = action.includes('منجز') || action.includes('خلص') || action.includes('تم');
+    const isDelete = action.includes('احذف') || action.includes('حذف') || action.includes('امسح');
+    const isEdit   = action.includes('عدّل') || action.includes('عدل') || action.includes('غيّر');
+    const isDefer  = action.includes('أجّل') || action.includes('اجل') || action.includes('بكرة') || action.includes('بكره');
+    if (isDone) {
+      await pool.query('UPDATE tasks SET done=true WHERE id=$1',[t.id]);
+      await sendWA(from, '✅ *' + t.title + '* تم إنجازها 🎉');
+      userState[from] = { step: 'idle' };
+    } else if (isDelete) {
+      await pool.query('DELETE FROM tasks WHERE id=$1',[t.id]);
+      await sendWA(from, '🗑️ تم حذف *' + t.title + '*');
+      userState[from] = { step: 'idle' };
+    } else if (isDefer) {
+      const tom2 = new Date(); tom2.setDate(tom2.getDate()+1);
+      const tom2Str = tom2.getFullYear() + '-' + String(tom2.getMonth()+1).padStart(2,'0') + '-' + String(tom2.getDate()).padStart(2,'0');
+      await pool.query('UPDATE tasks SET date=$1,reminded=false,reminded_pre=false WHERE id=$2',[tom2Str,t.id]);
+      await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لبكرة');
+      userState[from] = { step: 'idle' };
+    } else if (isEdit) {
+      userState[from] = { step: 'waiting_edit_field', task: t };
+      await sendWA(from, '✏️ *تعديل: ' + t.title + '*\n\n1. العنوان\n2. الوقت\n3. التاريخ\n4. الملاحظة' + (t.type==='meeting'?'\n5. الموقع':'') + '\n\nأرسل الرقم');
+    } else {
+      await sendWA(from, '❓ ما فهمت — مثال: *3 منجز* أو *3 احذف* أو *3 أجّل* أو *3 عدّل*');
+    }
+    return;
+  }
+
   if (state.step === 'waiting_undo_selection') {
     const n = parseInt(msg);
     if (n >= 1 && n <= state.tasks.length) {
@@ -2859,6 +3363,30 @@ async function handleVisitor(from, msg) {
   try { const r = await pool.query('SELECT * FROM visitors WHERE phone=$1',[from]); if (r.rows.length) visitor = r.rows[0]; } catch(e) {}
   const visitorName = (visitor && visitor.name) || state.visitorName || null;
   if (visitor) try { await pool.query('UPDATE visitors SET msg_count=msg_count+1,last_seen=NOW() WHERE phone=$1',[from]); } catch(e) {}
+
+  // وضع الإجازة
+  const vacation = await getVacation();
+  const onVacation = vacation && await isOnVacation();
+  if (onVacation) {
+    // الرسائل الشخصية والتذكيرات تكمل طبيعي — فقط الطلبات والأعمال تُجمَّد
+    const workWords = ['طلب','اجتماع','لقاء','مقابلة','مشروع','عقد','موافقة','تقرير','عمل','شغل','ملف','مهمة','بخصوص','بتخصوص','موضوع'];
+    const isWorkMsg = workWords.some(function(w){ return msg.includes(w); }) || (analysis && ['task_request','meeting_request','reminder_for_owner'].includes(analysis.intent));
+    if (isWorkMsg) {
+      await saveVacationMessage(from, visitorName||from, msg);
+      if (!sentReminders.has('vac_' + from + '_' + todayStr())) {
+        sentReminders.add('vac_' + from + '_' + todayStr());
+        const gr = visitorName ? 'هلا ' + visitorName + '! 👋\n' : 'هلا! 👋\n';
+        await sendWA(from,
+          gr +
+          'عبدالعزيز حالياً في إجازة حتى ' + vacation.end_date + ' 🏖️\n\n' +
+          'وصلت رسالتك وبتوصله يوم مباشرته ' + vacation.return_date + ' بإذن الله 😊\n' +
+          'شكراً على تواصلك!'
+        );
+      }
+      return;
+    }
+    // غير عملي — كمّل طبيعي مع إشعار بسيط
+  }
 
   // وضع الغياب
   const busy = await isBusy();
