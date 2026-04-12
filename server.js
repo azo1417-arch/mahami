@@ -2190,7 +2190,7 @@ async function handleOwner(from, msg) {
       } else {
         let reply = '✅ تم إيقاف وضع الغياب\n\nباقي اليوم:\n\n';
         r.rows.forEach(function(t,i) {
-          reply += (i+1) + '. ' + (t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅') + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n';
+          reply += (i+1) + '. ' + (t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹') + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n';
         });
         await sendWA(from, reply);
       }
@@ -2621,7 +2621,7 @@ async function handleOwner(from, msg) {
       const r = await pool.query('SELECT * FROM tasks WHERE done=false AND date=$1 ORDER BY time',[todayStr()]);
       if (!r.rows.length) { await sendWA(from, '📋 ما عندك مهام اليوم ✅'); break; }
       let list = '📅 *مهام اليوم (' + r.rows.length + '):*\n\n';
-      r.rows.forEach(function(t,i) { list += (i+1) + '. ' + (t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅') + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+      r.rows.forEach(function(t,i) { list += (i+1) + '. ' + (t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹') + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
       await sendWA(from, list);
       break;
     }
@@ -2798,7 +2798,7 @@ async function handleOwner(from, msg) {
       ]);
       const allTasks = [...overdueR2.rows, ...todayR2.rows, ...upcomingR2.rows];
       if (!allTasks.length) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
-      const icon2 = function(t) { return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅'; };
+      const icon2 = function(t) { return t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'🔹'; };
       let list2 = '📋 *كل مهامك — اختار رقم:*\n\n';
       if (overdueR2.rows.length) {
         list2 += '⚠️ *متأخرة:*\n';
@@ -3247,9 +3247,12 @@ async function handleOwnerState(from, msg, state) {
       userState[from] = { step: 'waiting_datetime', taskTitle: state.taskTitle, taskType: state.taskType, taskNote: state.taskNote||'' };
       await sendWA(from, '📅 أرسل التاريخ الجديد:');
     } else {
-      // مو 1 أو 2 — كسر الـ state وعالج الطلب الجديد
-      userState[from] = { step: 'idle' };
-      await handleOwner(from, msg);
+      // مو 1 أو 2 — جاوب على السؤال وارجع للتنبيه (لا تكسر الـ state)
+      const quickReply = await nawafOwnerReply(msg, '');
+      if (quickReply) await sendWA(from, quickReply);
+      // أعد إرسال التنبيه
+      const dayLabels2 = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
+      await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels2[state.taskType]||'المهمة') + ' بتاريخ *' + state.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
     }
     return;
   }
