@@ -3283,12 +3283,14 @@ async function handleOwnerState(from, msg, state) {
       userState[from] = { step: 'waiting_datetime', taskTitle: state.taskTitle, taskType: state.taskType, taskNote: state.taskNote||'' };
       await sendWA(from, '📅 أرسل التاريخ الجديد:');
     } else {
-      // مو 1 أو 2 — جاوب على السؤال وارجع للتنبيه (لا تكسر الـ state)
-      const quickReply = await nawafOwnerReply(msg, '');
-      if (quickReply) await sendWA(from, quickReply);
-      // أعد إرسال التنبيه
+      // مو 1 أو 2 — احفظ الـ state مؤقتاً وعالج الطلب ثم أعد التنبيه
+      const savedState = Object.assign({}, state);
+      userState[from] = { step: 'idle' };
+      await handleOwner(from, msg);
+      // أعد الـ state وأرسل التنبيه مرة ثانية
+      userState[from] = savedState;
       const dayLabels2 = { task: 'المهمة', meeting: 'الاجتماع', reminder: 'التذكير' };
-      await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels2[state.taskType]||'المهمة') + ' بتاريخ *' + state.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
+      await sendWA(from, '⚠️ *تنبيه:* ' + (dayLabels2[savedState.taskType]||'المهمة') + ' بتاريخ *' + savedState.date + '* يوافق يوم *الجمعة*\n\n1️⃣ كمّل — احفظ بنفس التاريخ\n2️⃣ غيّر — أخبرني التاريخ الجديد');
     }
     return;
   }
