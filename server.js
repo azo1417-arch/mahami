@@ -569,7 +569,7 @@ async function analyzeOwner(msg, context) {
     'الرسالة: "' + msg + '"\n\n' +
     (msg.includes('الرسالة المقصودة:') ? 'مهم: المستخدم يسأل عن "الرسالة المقصودة" المذكورة، لا عن مهام السياق\n\n' : '') +
     'أعد:\n' +
-    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|show_tasks_all|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|add_note|stats|focus_mode|end_focus|add_occasion|show_occasions|share_task|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
+    '{"action":"approve|reject|approve_name|reject_name|remind_visitor|send_message|add_task|add_meeting|add_reminder|add_reminder_on_task|show_today|show_tomorrow|show_date|show_week|show_week_full|show_tasks|show_tasks_all|done|undo_done|undo_delete|postpone|postpone_all|delete|delete_all|delete_done|delete_overdue|manage_tasks|edit|search|search_tasks|set_priority|add_note|stats|focus_mode|end_focus|add_occasion|show_occasions|share_task|busy|back|vacation|cancel_vacation|back_from_vacation|show_vacation_msgs|remember|recall|add_relation|recall_relation|add_slot|show_slots|help|chat|unknown",' +
     '"target_name":null,"message_to_send":null,"task_title":null,"date":null,"time":null,' +
     '"memory_key":null,"memory_value":null,"relation_name":null,"relation_info":null,"note":null,' +
     '"confidence":"high|medium|low"}\n\n' +
@@ -580,6 +580,7 @@ async function analyzeOwner(msg, context) {
     '- رفض [اسم] = reject_name\n' +
     '- ذكره/ذكر بعد X = remind_visitor\n' +
     '- ذكرني بعد X دقيقة/ساعة = add_reminder (date=اليوم, time=الوقت المحسوب)\n' +
+    '- ذكرني فيها/ذكرني بها/ذكرني بهذه المهمة بكرة/بعد X = add_reminder_on_task (task_title=آخر مهمة ذُكرت, time=الوقت, date=التاريخ)\n' +
     '- ذكرني كل يوم بـ X حتى تاريخ Y = daily_reminder (task_title=المهمة, date=تاريخ النهاية)\n' +
     '- ارسل/أرسل لـ[شخص أو رقم] الآن/فوراً = send_message (message_to_send=نص الرسالة, target_name=المستقبل)\n' +
     '- ارسل/أرسل لـ[شخص أو رقم] بعد X أو في تاريخ/وقت معين = scheduled_message (task_title=نص الرسالة فقط, target_name=المستقبل, date=التاريخ, time=الوقت)\n' +
@@ -620,6 +621,8 @@ async function analyzeOwner(msg, context) {
     '- بعد X دقيقة/ساعة = احسب الوقت من ' + cur + '\n' +
     '- الجمعة/السبت/الأحد... القادم = استخدم التاريخ المحسوب في السطر أعلاه مباشرة (أقرب يوم في المستقبل)\n' +
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
+    '- ذكرني فيها/بها/به/فيه بعد/ذكرني فيها بكرة = add_reminder (task_title=عنوان المهمة من السياق, date=التاريخ, time=الوقت)\n' +
+    '- مهم: "ذكرني فيها/بها" يعني أضف تذكير على المهمة الأخيرة في السياق وليس مهمة جديدة\n' +
     '- وش المعلق/وش معلق/طلبات معلقة/وش اللي تبي أرد/تبي ترد عليه/طلبات الزوار = show_tasks\n' +
     '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks_all\n' +
     '- وش عندي هالأسبوع/مهام الأسبوع/جدول الأسبوع = show_week_full\n' +
@@ -642,7 +645,7 @@ async function analyzeOwner(msg, context) {
     '- كلام عادي/سؤال/مشكلة/أي شيء ثاني = chat\n' +
     '- مهم: إذا ما تأكدت من الأمر اختر chat وليس unknown\n' +
     '- unknown فقط للرسائل الفارغة أو غير المفهومة كلياً';
-  return callAIJson('claude-sonnet-4-20250514', 400, prompt);
+  return callAIJson('claude-sonnet-4-20250514', 800, prompt);
 }
 
 // ─── Nawaf Owner Reply ────────────────────────────────────────────────────
@@ -1299,40 +1302,67 @@ cron.schedule('0 9 * * *', async function() {
         getVacationMessages()
       ]);
 
-      let report = '📋 *ملخص ما فاتك:*\n';
+      // جلب التذكيرات اللي نواف تكفل بها أثناء الإجازة
+      const autoHandled = await pool.query(
+        "SELECT * FROM tasks WHERE status='approved' AND requested_by!='' AND type='reminder' AND created_at>=$1 ORDER BY created_at",
+        [v.start_date + 'T00:00:00']
+      );
+
+      let report = '📋 *تقرير الإجازة الكامل:*\n';
+      report += '📅 ' + v.start_date + ' ← ' + today + '\n';
       report += '─────────────\n\n';
 
+      // ما نواف تكفل به
+      if (autoHandled.rows.length) {
+        report += '🤖 *نواف تكفّل بـ (' + autoHandled.rows.length + '):*\n';
+        autoHandled.rows.forEach(function(t){
+          report += '   ✅ ذكّر *' + t.requested_by_name + '* بـ ' + t.title;
+          if (t.date) report += ' (' + t.date + (t.time?' '+fmt12(t.time):'') + ')';
+          report += '\n';
+        });
+        report += '\n';
+      }
+
+      // الرسائل المجمدة
       if (frozenMsgs.length) {
-        report += '📬 *رسائل مجمدة (' + frozenMsgs.length + '):*\n';
-        frozenMsgs.forEach(function(m,i){ report += (i+1) + '. 👤 *' + (m.name||m.phone) + '*\n   ' + m.message.substring(0,60) + (m.message.length>60?'...':'') + '\n'; });
+        report += '📬 *رسائل وصلت أثناء الإجازة (' + frozenMsgs.length + '):*\n';
+        frozenMsgs.forEach(function(m,i){ report += (i+1) + '. 👤 *' + (m.name||m.phone) + '*: ' + m.message.substring(0,80) + (m.message.length>80?'...':'') + '\n'; });
         report += '\n';
       }
 
+      // الطلبات المعلقة (ما أُجيب عليها)
       if (pendingReqR.rows.length) {
-        report += '⏳ *طلبات معلقة (' + pendingReqR.rows.length + '):*\n';
-        pendingReqR.rows.forEach(function(t){ report += '👤 *' + t.requested_by_name + '*: ' + t.title + '\n'; });
+        report += '⏳ *لسا تحتاج ردك (' + pendingReqR.rows.length + '):*\n';
+        pendingReqR.rows.forEach(function(t){
+          const tIcon = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'📌';
+          report += tIcon + ' *' + t.requested_by_name + '* — ' + t.title + '\n';
+          report += '   👉 *قبول ' + t.requested_by_name + '* أو *رفض ' + t.requested_by_name + '*\n';
+        });
         report += '\n';
       }
 
+      // المهام المتأخرة
       if (overdueR.rows.length) {
-        report += '⚠️ *مهام متأخرة (' + overdueR.rows.length + '):*\n';
+        report += '⚠️ *مهام فاتت (' + overdueR.rows.length + '):*\n';
         overdueR.rows.forEach(function(t){ report += '🔹 *' + t.title + '* — ' + t.date + '\n'; });
         report += '\n';
       }
 
+      // مهام اليوم
       if (todayR.rows.length) {
-        report += '📌 *مهام اليوم (' + todayR.rows.length + '):*\n';
+        report += '📌 *اليوم (' + todayR.rows.length + '):*\n';
         todayR.rows.forEach(function(t){ report += (t.type==='meeting'?'📅':'🔹') + ' *' + t.title + '*' + (t.time?' — '+fmt12(t.time):'') + '\n'; });
         report += '\n';
       }
 
+      // القادمة
       if (upcomingR.rows.length) {
         report += '🗓️ *القادمة (' + upcomingR.rows.length + '):*\n';
         upcomingR.rows.forEach(function(t){ report += '🔹 *' + t.title + '* — ' + (t.date||'بدون تاريخ') + '\n'; });
       }
 
-      if (!frozenMsgs.length && !overdueR.rows.length && !pendingReqR.rows.length && !todayR.rows.length && !upcomingR.rows.length) {
-        report += 'ما في شيء معلق — صفحة بيضاء! 🎉';
+      if (!frozenMsgs.length && !overdueR.rows.length && !pendingReqR.rows.length && !todayR.rows.length && !upcomingR.rows.length && !autoHandled.rows.length) {
+        report += 'صفحة بيضاء — ما في شيء معلق! 🎉';
       }
 
       await sendWA(PHONE, report.trim());
@@ -2147,7 +2177,7 @@ async function handleOwner(from, msg) {
     }
     if (history.length) {
       context += '\nسجل المحادثة الأخيرة:\n';
-      history.forEach(function(h) { context += (h.role==='owner'?'عبدالعزيز':'نواف') + ': ' + h.message + '\n'; });
+      history.forEach(function(h) { context += (h.role==='owner'?'عبدالعزيز':'نواف') + ': ' + h.message + '\n'; }); // رسائل كاملة
     }
     if (!context) context = 'لا يوجد طلبات أو مهام';
   } catch(e) {}
@@ -2343,6 +2373,50 @@ async function handleOwner(from, msg) {
         await sendWA(from, summary);
         await pool.query('DELETE FROM vacation_messages');
       }
+      // تقرير شامل عن الإجازة
+      try {
+        const vacStart = (await pool.query("SELECT * FROM vacation WHERE active=false ORDER BY created_at DESC LIMIT 1")).rows[0];
+        const startDate = vacStart ? vacStart.start_date : null;
+
+        const [pendingReqs, autoReminded, doneTasks, newTasks] = await Promise.all([
+          pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC"),
+          pool.query("SELECT * FROM tasks WHERE status='approved' AND requested_by!='' AND type='reminder' AND done=false ORDER BY date,time"),
+          startDate ? pool.query("SELECT * FROM tasks WHERE done=true AND created_at>=$1 ORDER BY created_at DESC",[startDate]) : Promise.resolve({rows:[]}),
+          startDate ? pool.query("SELECT * FROM tasks WHERE done=false AND created_at>=$1 ORDER BY date,time",[startDate]) : Promise.resolve({rows:[]})
+        ]);
+
+        let report = '📋 *تقرير إجازتك:*\n\n';
+
+        if (frozenMsgs.length) {
+          report += '📬 *رسائل وصلت أثناء الإجازة (' + frozenMsgs.length + '):*\n';
+          frozenMsgs.forEach(function(m){ report += '👤 *' + (m.name||m.phone) + '*: ' + m.message.substring(0,60) + (m.message.length>60?'...':'') + '\n'; });
+          report += '\n';
+        }
+        if (autoReminded.rows.length) {
+          report += '🔔 *ذكّرتهم نواف تلقائي (' + autoReminded.rows.length + '):*\n';
+          autoReminded.rows.forEach(function(t){ report += '👤 *' + t.requested_by_name + '*: ' + t.title + '\n'; });
+          report += '\n';
+        }
+        if (pendingReqs.rows.length) {
+          report += '⏳ *ينتظرون ردك (' + pendingReqs.rows.length + '):*\n';
+          pendingReqs.rows.forEach(function(t){ report += '👤 *' + t.requested_by_name + '*: ' + t.title + '\n'; });
+          report += '\n';
+        }
+        if (doneTasks.rows.length) {
+          report += '✅ *أُنجز أثناء إجازتك (' + doneTasks.rows.length + '):\n';
+          doneTasks.rows.slice(0,5).forEach(function(t){ report += '~' + t.title + '~\n'; });
+          report += '\n';
+        }
+        if (newTasks.rows.length) {
+          report += '📌 *مهام معلقة (' + newTasks.rows.length + '):*\n';
+          newTasks.rows.slice(0,5).forEach(function(t){ report += '🔹 ' + t.title + (t.date?' — '+t.date:'') + '\n'; });
+        }
+        if (!frozenMsgs.length && !autoReminded.rows.length && !pendingReqs.rows.length) {
+          report += 'ما في متعلقات — صفحة بيضاء 🎉';
+        }
+        await sendWA(from, report.trim());
+      } catch(e) { console.error('vacation report:', e.message); }
+
       await sendWA(from, '✅ أهلاً بعودتك! البوت رجع للعمل الطبيعي 🎉');
       break;
     }
@@ -2608,14 +2682,21 @@ async function handleOwner(from, msg) {
       const title = analysis.task_title || msg;
       const time  = analysis.time;
       const note  = analysis.note || '';
-      // استخرج الأيام من الرسالة
+      // استخرج الأيام من الرسالة — مرة وحدة فقط
       const dayMap = { 'أحد':'0','اثنين':'1','ثلاثاء':'2','أربعاء':'3','خميس':'4','جمعة':'5','سبت':'6' };
-      let days = [];
-      Object.keys(dayMap).forEach(function(d) { if (msg.includes(d)) days.push(dayMap[d]); });
+      const days = [];
+      Object.keys(dayMap).forEach(function(d) { if (msg.includes(d) && !days.includes(dayMap[d])) days.push(dayMap[d]); });
       const daysStr = days.length > 0 ? days.join(',') : '';
+      // تحقق من وجود تذكير مشابه
+      const existing = await pool.query("SELECT * FROM recurring_tasks WHERE LOWER(title) LIKE LOWER($1) AND active=true LIMIT 1",['%'+title.substring(0,10)+'%']);
+      if (existing.rows.length > 0) {
+        const e = existing.rows[0];
+        await sendWA(from, 'عندك تذكير مشابه بالفعل: "' + e.title + '" — تبي أحدّثه أو تضيف جديد؟\n1️⃣ حدّث الموجود\n2️⃣ أضف جديد');
+        userState[from] = { step: 'waiting_recurring_confirm', existingId: e.id, title, time, daysStr, note };
+        break;
+      }
       if (title && time) {
-        await pool.query('INSERT INTO recurring_tasks (title,type,time,days,note) VALUES ($1,$2,$3,$4,$5)',
-          [title,'task',time,daysStr,note]);
+        await pool.query('INSERT INTO recurring_tasks (title,type,time,days,note) VALUES ($1,$2,$3,$4,$5)',[title,'task',time,daysStr,note]);
         const daysLabel = days.length > 0 ? 'كل ' + Object.keys(dayMap).filter(function(d){ return days.includes(dayMap[d]); }).join(' و') : 'كل يوم';
         await sendWA(from, 'تمام، بضيف "' + title + '" ' + daysLabel + ' الساعة ' + fmt12(time) + ' تلقائياً ✅');
       } else {
@@ -2981,33 +3062,43 @@ async function handleOwner(from, msg) {
     }
 
     case 'show_tasks': {
-      // طلبات الزوار المعلقة مع سياق كامل
-      const pending2 = await pool.query(
-        "SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC"
-      );
-      if (!pending2.rows.length) { await sendWA(from, '📬 ما عندك طلبات معلقة ✅'); break; }
+      // اجلب التذكيرات اللي نواف تكفل بها + الطلبات اللي تنتظر ردك
+      const [autoReminders, pendingRequests] = await Promise.all([
+        pool.query("SELECT * FROM tasks WHERE status='approved' AND requested_by!='' AND type='reminder' AND done=false ORDER BY date,time"),
+        pool.query("SELECT * FROM tasks WHERE status IN ('pending','awaiting_visitor_confirm') AND requested_by!='' ORDER BY created_at DESC")
+      ]);
 
-      // بناء السياق الكامل لكل طلب
-      const contextParts = [];
-      for (const t of pending2.rows) {
-        const tLabel = t.type==='meeting'?'اجتماع':t.type==='reminder'?'تذكير':'طلب';
-        const tIcon  = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'📌';
-        let part = tIcon + ' *' + t.requested_by_name + '* — ' + tLabel + ': *' + t.title + '*';
-        if (t.date) part += '\n   📅 ' + t.date + (t.time?' ⏰ '+fmt12(t.time):'');
-        if (t.note) part += '\n   📝 ' + t.note;
-        // وش تحتاج تسوي
-        if (t.type === 'meeting') {
-          part += '\n   👉 رد بـ *قبول ' + t.requested_by_name + '* لتأكيد الاجتماع أو *رفض ' + t.requested_by_name + '*';
-        } else if (t.type === 'reminder') {
-          part += '\n   👉 رد بـ *قبول ' + t.requested_by_name + '* وسيذكّره نواف تلقائي أو *رفض ' + t.requested_by_name + '*';
-        } else {
-          part += '\n   👉 رد بـ *قبول ' + t.requested_by_name + '* أو *رفض ' + t.requested_by_name + '*';
-        }
-        contextParts.push(part);
+      if (!autoReminders.rows.length && !pendingRequests.rows.length) {
+        await sendWA(from, '📬 ما عندك شيء معلق ✅'); break;
       }
 
-      let msg2 = '📬 *الطلبات المعلقة (' + pending2.rows.length + '):*\n\n';
-      msg2 += contextParts.join('\n\n─────────\n\n');
+      let msg2 = '';
+
+      // التذكيرات اللي نواف تكفل بها
+      if (autoReminders.rows.length) {
+        msg2 += '🔔 *ذكّرت ' + autoReminders.rows.length + ' شخص:*\n';
+        autoReminders.rows.forEach(function(t){
+          msg2 += '👤 *' + t.requested_by_name + '* — ' + t.title;
+          if (t.date) msg2 += ' — ' + t.date + (t.time?' '+fmt12(t.time):'');
+          msg2 += '\n';
+        });
+        msg2 += '\n';
+      }
+
+      // الطلبات اللي تنتظر ردك
+      if (pendingRequests.rows.length) {
+        msg2 += '⏳ *ينتظرون ردك (' + pendingRequests.rows.length + '):*\n\n';
+        pendingRequests.rows.forEach(function(t,i){
+          const tIcon = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'📌';
+          const tLabel = t.type==='meeting'?'اجتماع':t.type==='reminder'?'تذكير':'طلب';
+          msg2 += (i+1) + '. ' + tIcon + ' *' + t.requested_by_name + '* يطلب ' + tLabel + ':\n';
+          msg2 += '   *' + t.title + '*';
+          if (t.date) msg2 += ' — ' + t.date + (t.time?' '+fmt12(t.time):'');
+          msg2 += '\n';
+          msg2 += '   👉 *قبول ' + t.requested_by_name + '* أو *رفض ' + t.requested_by_name + '*\n\n';
+        });
+      }
+
       await sendWA(from, msg2.trim());
       break;
     }
@@ -3062,6 +3153,37 @@ async function handleOwner(from, msg) {
       }
       await sendWA(from, tl.text + '\n\n✏️ أرسل رقم المهمة اللي تبي تعدلها');
       userState[from] = { step: 'waiting_edit_selection', tasks: tl.tasks };
+      break;
+    }
+
+    case 'add_reminder_on_task': {
+      // ذكرني بمهمة موجودة — ابحث عن آخر مهمة في السياق أو المذكورة
+      const rtTitle = analysis.task_title || '';
+      const rtTime  = analysis.time;
+      const rtDate  = analysis.date;
+      if (!rtTime && !rtDate) {
+        await sendWA(from, '⏰ متى تبغى أذكّرك؟ مثال: "بكرة 2 الظهر"');
+        break;
+      }
+      // ابحث عن المهمة في السياق
+      let targetTask = null;
+      if (rtTitle) {
+        const r = await pool.query("SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) LIMIT 1",['%'+rtTitle.substring(0,15)+'%']);
+        if (r.rows.length) targetTask = r.rows[0];
+      }
+      if (!targetTask) {
+        // جيب آخر مهمة أُضيفت
+        const r = await pool.query("SELECT * FROM tasks WHERE done=false ORDER BY created_at DESC LIMIT 1");
+        if (r.rows.length) targetTask = r.rows[0];
+      }
+      if (!targetTask) { await sendWA(from, '❓ ما لقيت مهمة أضيف عليها التذكير'); break; }
+      const remDate = rtDate || todayStr();
+      const remTime = rtTime || '09:00';
+      // أضف تذكير منفصل
+      const id = Date.now();
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note) VALUES ($1,$2,$3,$4,$5,$6)',
+        [id, 'تذكير: ' + targetTask.title, 'reminder', remDate, remTime, '']);
+      await sendWA(from, '🔔 تم التسجيل!\n📌 تذكير: *' + targetTask.title + '*\n⏰ ' + fmt12(remTime) + '\n📅 ' + remDate);
       break;
     }
 
@@ -3422,7 +3544,7 @@ async function handleOwner(from, msg) {
       if (reply) {
         await sendWA(from, reply);
         setImmediate(function() {
-          saveConvMsg(from, 'nawaf', reply.substring(0,200));
+          saveConvMsg(from, 'nawaf', reply);
           updateProfileFromConversation(msg, reply);
         });
       }
@@ -3519,6 +3641,12 @@ async function handleOwnerState(from, msg, state) {
 
   if (state.step === 'waiting_done_selection') {
     const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
+    const exitWords2 = ['لا','خلاص','الغ','وقف','كفاية','بس'];
+    if (exitWords2.some(function(w){ return msg.trim() === w; })) {
+      userState[from] = { step: 'idle' };
+      await sendWA(from, '✅ تمام');
+      return;
+    }
     if (isAll) {
       for (const t of state.tasks) await pool.query('UPDATE tasks SET done=true WHERE id=$1',[t.id]);
       await sendWA(from, '✅ تم إنجاز *' + state.tasks.length + '* مهام 🎉');
@@ -3547,6 +3675,12 @@ async function handleOwnerState(from, msg, state) {
 
   if (state.step === 'waiting_postpone_selection') {
     const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
+    const exitWords2 = ['لا','خلاص','الغ','وقف','كفاية','بس'];
+    if (exitWords2.some(function(w){ return msg.trim() === w; })) {
+      userState[from] = { step: 'idle' };
+      await sendWA(from, '✅ تمام');
+      return;
+    }
     const tomD = new Date(); tomD.setDate(tomD.getDate()+1);
     const tomStr = tomD.getFullYear() + '-' + String(tomD.getMonth()+1).padStart(2,'0') + '-' + String(tomD.getDate()).padStart(2,'0');
     if (isAll) {
@@ -3589,6 +3723,13 @@ async function handleOwnerState(from, msg, state) {
 
   if (state.step === 'waiting_delete_selection') {
     const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
+    // خروج من القائمة
+    const exitWords = ['لا','خلاص','الغ','وقف','كفاية','بس','لا شي'];
+    if (exitWords.some(function(w){ return msg.trim() === w || msg.trim() === w+' خلاص' || msg.trim() === 'لا '+w; })) {
+      userState[from] = { step: 'idle' };
+      await sendWA(from, '✅ تمام');
+      return;
+    }
     if (isAll) {
       for (const t of state.tasks) await deleteTask(t.id);
       await sendWA(from, '🗑️ تم حذف *' + state.tasks.length + '* مهام');
@@ -3613,7 +3754,11 @@ async function handleOwnerState(from, msg, state) {
       } else {
         userState[from] = { step: 'idle' };
       }
-    } else { userState[from] = { step: 'idle' }; await handleOwner(from, msg); }
+    } else {
+      // أي نص مو رقم — اخرج وعالج كطلب جديد
+      userState[from] = { step: 'idle' };
+      await handleOwner(from, msg);
+    }
     return;
   }
 
@@ -3868,6 +4013,21 @@ async function handleOwnerState(from, msg, state) {
     return;
   }
 
+  if (state.step === 'waiting_recurring_confirm') {
+    const is1 = msg.includes('1') || msg.includes('حدّث') || msg.includes('حدث') || msg.includes('عدّل');
+    const is2 = msg.includes('2') || msg.includes('جديد') || msg.includes('أضف');
+    if (is1) {
+      await pool.query('UPDATE recurring_tasks SET time=$1,days=$2 WHERE id=$3',[state.time,state.daysStr,state.existingId]);
+      await sendWA(from, '✅ تم تحديث التذكير المتكرر');
+    } else if (is2) {
+      await pool.query('INSERT INTO recurring_tasks (title,type,time,days,note) VALUES ($1,$2,$3,$4,$5)',[state.title,'task',state.time,state.daysStr,state.note||'']);
+      await sendWA(from, '✅ تمت إضافة تذكير متكرر جديد');
+    } else {
+      await sendWA(from, '1️⃣ حدّث الموجود\n2️⃣ أضف جديد'); return;
+    }
+    userState[from] = { step: 'idle' }; return;
+  }
+
   if (state.step === 'waiting_undo_delete_selection') {
     const n = parseInt(msg);
     if (n >= 1 && n <= state.tasks.length) {
@@ -4020,22 +4180,27 @@ async function handleVisitor(from, msg) {
   }
 
   if (state.step === 'waiting_reminder_choice') {
-    const isYes = ['1','١','أيوه','ايوه','نعم','اي','yes'].some(function(w) { return msg.includes(w); });
-    if (isYes) {
+    const is1 = msg.includes('1') || msg.includes('١') || ['أيوه','ايوه','نعم','اي','yes','ذكرني','تمام'].some(function(w){ return msg.includes(w); });
+    const is2 = msg.includes('2') || msg.includes('٢') || ['عبدالعزيز','عنده','ارفع','لا'].some(function(w){ return msg.includes(w); });
+    if (is1) {
       if (state.reminderTime) {
         const id = Date.now();
-        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id,state.reminderTitle,'reminder',state.reminderDate||todayStr(),state.reminderTime,'',from,visitorName,'approved']);
-        await sendWA(from, '✅ سأذكّرك بـ "' + state.reminderTitle + '" في ' + fmt12(state.reminderTime) + ' 🔔');
-        await sendWA(PHONE, '📬 نواف سيذكّر ' + visitorName + ' بـ "' + state.reminderTitle + '" الساعة ' + fmt12(state.reminderTime));
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+          [id,state.reminderTitle,'reminder',state.reminderDate||todayStr(),state.reminderTime,'',from,visitorName,'approved']);
+        await sendWA(from, '✅ تمام، بذكّرك بـ "' + state.reminderTitle + '" الساعة ' + fmt12(state.reminderTime) + ' 🔔');
+        await sendWA(PHONE, '🔔 *نواف قبل تذكير تلقائي*\n👤 *' + visitorName + '*\n📌 ' + state.reminderTitle + '\n⏰ ' + fmt12(state.reminderTime));
       } else {
         userState[from] = { step: 'waiting_visitor_reminder_time', history: state.history, visitorName, reminderTitle: state.reminderTitle, directReminder: true };
         await sendWA(from, '⏰ متى تبغى أذكّرك؟ مثال: "بعد ساعة"'); return;
       }
-    } else {
+    } else if (is2) {
       const id = Date.now();
-      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id,state.reminderTitle,'reminder',state.reminderDate,state.reminderTime,'',from,visitorName,'pending']);
-      await sendWA(from, 'تم استلام طلبك! 📨\nسأرفع الطلب لعبدالعزيز الحين وأبلغك بقراره ✅');
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [id,state.reminderTitle,'reminder',state.reminderDate,state.reminderTime,'',from,visitorName,'pending']);
+      await sendWA(from, '✅ تمام، بوصل الطلب لعبدالعزيز');
       await sendWA(PHONE, buildRequestNotif(visitorName, from, 'reminder', state.reminderTitle, state.reminderDate, state.reminderTime));
+    } else {
+      await sendWA(from, '1️⃣ ذكّرني أنا\n2️⃣ أرسل لعبدالعزيز'); return;
     }
     userState[from] = { step: 'idle', history: state.history, visitorName }; return;
   }
@@ -4237,22 +4402,39 @@ async function handleVisitor(from, msg) {
     return;
   }
 
-  // reminder_for_owner
+  // reminder_for_owner — عرض خيار: أذكّرك أنا أو أرفع لعبدالعزيز
   if (analysis.intent === 'reminder_for_owner') {
     if (analysis.task_title) {
+      // لو في وقت محدد — عرض الخيارين
       userState[from] = { step: 'waiting_reminder_choice', reminderTitle: analysis.task_title, reminderDate: analysis.date, reminderTime: analysis.time, history: state.history, visitorName };
-      await sendWA(from, '🔔 فاهم إنك تبغى تذكّر عبدالعزيز بـ "' + analysis.task_title + '"\n\nشرايك أذكّرك أنا مباشرة بدون ما تنتظر رد؟ 😊\n\n1️⃣ أيوه، ذكّرني أنت\n2️⃣ لا، أرسلها لعبدالعزيز');
+      await sendWA(from, '🔔 فاهم إنك تبغى تذكير بـ "' + analysis.task_title + '"\n\n1️⃣ ذكّرني أنا مباشرة\n2️⃣ أرسلها لعبدالعزيز');
     } else {
       userState[from] = { step: 'waiting_visitor_details', requestType: 'reminder', history: state.history, visitorName };
-      await sendWA(from, '🔔 وش تبيني أذكّر عبدالعزيز فيه؟ 👇');
+      await sendWA(from, '🔔 وش تبيني أذكّر به؟ 👇');
     }
     return;
   }
 
-  // reminder_for_self
+  // reminder_for_self — يقبل فوراً بدون سؤال
   if (analysis.intent === 'reminder_for_self') {
-    userState[from] = { step: 'waiting_visitor_reminder_topic', history: state.history, visitorName };
-    await sendWA(from, '🔔 وش تبيني أذكّرك فيه؟ 👇'); return;
+    if (analysis.task_title && (analysis.time || analysis.date)) {
+      // عنده كل المعلومات — سجّل مباشرة
+      const id = Date.now();
+      const rDate = analysis.date || todayStr();
+      const rTime = analysis.time || '09:00';
+      await pool.query('INSERT INTO tasks (id,title,type,date,time,note,requested_by,requested_by_name,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [id, analysis.task_title, 'reminder', rDate, rTime, '', from, visitorName, 'approved']);
+      await sendWA(from, '✅ تمام، بذكّرك بـ "' + analysis.task_title + '" ' + fmt12(rTime) + ' 🔔');
+      await sendWA(PHONE, '🔔 *نواف قبل تذكير تلقائي*\n👤 *' + visitorName + '*\n📌 ' + analysis.task_title + '\n⏰ ' + fmt12(rTime) + '\n📅 ' + rDate);
+    } else if (analysis.task_title) {
+      // عنده الموضوع بس ناقص الوقت
+      userState[from] = { step: 'waiting_visitor_reminder_time', history: state.history, visitorName, reminderTitle: analysis.task_title, directReminder: true };
+      await sendWA(from, '⏰ متى تبغى أذكّرك بـ "' + analysis.task_title + '"؟');
+    } else {
+      userState[from] = { step: 'waiting_visitor_reminder_topic', history: state.history, visitorName };
+      await sendWA(from, '🔔 وش تبيني أذكّرك فيه؟ 👇');
+    }
+    return;
   }
 
   // طلب بناء أو تعديل ملف من الزائر
