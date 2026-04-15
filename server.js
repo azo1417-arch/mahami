@@ -540,7 +540,8 @@ async function parseTask(msg) {
     '- مهم جداً: "الجمعة القادمة" = أقرب جمعة في المستقبل من اليوم (مو بعد أسبوع)\n' +
     '- الساعة 3 العصر = 15:00\n' +
     '- الساعة 3 الصبح = 03:00\n' +
-    '- بدون تاريخ = null, بدون وقت = null\n\n' +
+    '- بدون تاريخ = null, بدون وقت = null\n' +
+    '- لو في أكثر من مهمة في الرسالة، استخرج الأولى فقط\n\n' +
     'الرسالة: "' + processed + '"';
 
   return callAIJson('claude-haiku-4-5', 300, prompt);
@@ -621,8 +622,8 @@ async function analyzeOwner(msg, context) {
     '- بعد X دقيقة/ساعة = احسب الوقت من ' + cur + '\n' +
     '- الجمعة/السبت/الأحد... القادم = استخدم التاريخ المحسوب في السطر أعلاه مباشرة (أقرب يوم في المستقبل)\n' +
     '- مهمة/اجتماع/تذكير جديد = add_task/add_meeting/add_reminder\n' +
-    '- ذكرني فيها/بها/به/فيه بعد/ذكرني فيها بكرة = add_reminder (task_title=عنوان المهمة من السياق, date=التاريخ, time=الوقت)\n' +
-    '- مهم: "ذكرني فيها/بها" يعني أضف تذكير على المهمة الأخيرة في السياق وليس مهمة جديدة\n' +
+    '- لو الرسالة فيها أكثر من مهمة/تذكير = add_task (سجّل الأولى وأشر إلى الباقية في note)\n' +
+    '- ذكرني فيها/بها/به/فيه = postpone (أجّل المهمة الأخيرة في السياق للتاريخ/الوقت المذكور)\n' +
     '- وش المعلق/وش معلق/طلبات معلقة/وش اللي تبي أرد/تبي ترد عليه/طلبات الزوار = show_tasks\n' +
     '- كل المهام/عرض كل/وش عندي/المهام كلها/وش المهام = show_tasks_all\n' +
     '- وش عندي هالأسبوع/مهام الأسبوع/جدول الأسبوع = show_week_full\n' +
@@ -2182,6 +2183,32 @@ async function handleOwner(from, msg) {
     if (!context) context = 'لا يوجد طلبات أو مهام';
   } catch(e) {}
 
+  // كشف الرسائل المتعددة (أكثر من مهمة في رسالة وحدة)
+  const multiLines = msg.split(/\n/).filter(function(l){ return l.trim().length > 3; });
+  const multiKeywords = ['وايضا','وأيضا','كمان','وكمان','و اذكرني','وذكرني','واجتماع','ومهمه','ومهمة'];
+  const hasMulti = multiLines.length >= 3 || multiKeywords.some(function(w){ return msg.includes(w); });
+  
+  if (hasMulti && multiLines.length >= 2) {
+    // سجّل كل سطر كمهمة منفصلة
+    let registered = [];
+    for (const line of multiLines) {
+      if (line.trim().length < 4) continue;
+      const p = await parseTask(line);
+      if (p && p.title && p.date && p.time) {
+        const id = Date.now() + Math.floor(Math.random()*1000);
+        const type2 = p.type || 'task';
+        await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+          [id, p.title, type2, p.date, p.time, '', '']);
+        registered.push('📌 *' + p.title + '* — ' + fmt12(p.time) + ' ' + p.date);
+      }
+    }
+    if (registered.length >= 2) {
+      await sendWA(from, '✅ تم تسجيل ' + registered.length + ' مهام:\n\n' + registered.join('\n'));
+      setImmediate(function() { saveConvMsg(from, 'owner', msg); });
+      return;
+    }
+  }
+
   const analysis = await analyzeOwner(msg, context);
   if (!analysis) { await sendWA(from, '❓ ما فهمت، جرب مرة ثانية'); return; }
   console.log('🧠 owner action:', analysis.action);
@@ -3116,6 +3143,22 @@ async function handleOwner(from, msg) {
     }
 
     case 'postpone': {
+      // لو فيه عنوان محدد (مثل "ذكرني فيها") — أجّل تلك المهمة مباشرة
+      const ptTitle = analysis.task_title;
+      const ptDate  = analysis.date;
+      const ptTime  = analysis.time;
+      if (ptTitle) {
+        const found = await pool.query("SELECT * FROM tasks WHERE done=false AND LOWER(title) LIKE LOWER($1) ORDER BY created_at DESC LIMIT 1",['%'+ptTitle.substring(0,15)+'%']);
+        if (found.rows.length) {
+          const t = found.rows[0];
+          const newDate = ptDate || (function(){ const d=new Date(); d.setDate(d.getDate()+1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); })();
+          const newTime = ptTime || t.time;
+          await pool.query('UPDATE tasks SET date=$1,time=$2,reminded=false,reminded_pre=false WHERE id=$3',[newDate,newTime,t.id]);
+          await sendWA(from, '⏰ تم تأجيل *' + t.title + '* لـ ' + newDate + (newTime?' الساعة '+fmt12(newTime):''));
+          break;
+        }
+      }
+      // لو ما في عنوان محدد — اعرض القائمة
       const tl = await buildTasksList(false);
       if (!tl.count) { await sendWA(from, '📋 ما عندك مهام معلقة ✅'); break; }
       if (tl.count === 1) {
@@ -3641,10 +3684,16 @@ async function handleOwnerState(from, msg, state) {
 
   if (state.step === 'waiting_done_selection') {
     const isAll = msg.trim() === 'الكل' || msg.trim() === 'كلها';
-    const exitWords2 = ['لا','خلاص','الغ','وقف','كفاية','بس'];
-    if (exitWords2.some(function(w){ return msg.trim() === w; })) {
+    const exitWords2 = ['لا','خلاص','الغ','وقف','كفاية','بس','لا خلاص','خلاص لا'];
+    if (exitWords2.some(function(w){ return msg.toLowerCase().trim() === w; })) {
       userState[from] = { step: 'idle' };
       await sendWA(from, '✅ تمام');
+      return;
+    }
+    // لو مو رقم ومو كلمة معروفة — خرج بدون رد
+    if (!/\d/.test(msg) && !isAll) {
+      userState[from] = { step: 'idle' };
+      await handleOwner(from, msg);
       return;
     }
     if (isAll) {
