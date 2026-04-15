@@ -3,760 +3,456 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>مهامي — لوحة التحكم</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>مهامي — لوحة المهام</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0a0f;
-    --surface: #111118;
-    --surface2: #1a1a24;
-    --surface3: #22222f;
-    --border: rgba(255,255,255,0.07);
+    --bg: #0f1117;
+    --col-bg: #1a1d27;
+    --col-header: #22263a;
+    --card-bg: #1e2235;
+    --card-hover: #252a40;
+    --border: rgba(255,255,255,0.06);
+    --text: #e2e4f0;
+    --text2: #8892b0;
+    --text3: #4a5278;
     --accent: #6c63ff;
-    --accent2: #ff6584;
-    --accent3: #43e97b;
-    --accent4: #f7971e;
-    --text: #e8e8f0;
-    --text2: #8888aa;
-    --text3: #55556a;
-    --urgent: #ff4757;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --yellow: #f1c40f;
+    --blue: #3498db;
+    --orange: #e67e22;
+    --pink: #e91e8c;
     --meeting: #4dabf7;
     --reminder: #ffd43b;
     --task: #69db7c;
-    --radius: 14px;
-    --shadow: 0 8px 32px rgba(0,0,0,0.4);
+    --urgent: #ff4757;
   }
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  * { box-sizing:border-box; margin:0; padding:0; }
 
   body {
-    font-family: 'IBM Plex Sans Arabic', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    overflow-x: hidden;
+    font-family:'Tajawal',sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+    overflow-x:auto;
   }
 
-  /* ─── خلفية متحركة ─── */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background:
-      radial-gradient(ellipse 80% 50% at 20% 10%, rgba(108,99,255,0.08) 0%, transparent 60%),
-      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(67,233,123,0.05) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: 0;
+  /* ── Header ── */
+  .header {
+    display:flex;
+    align-items:center;
+    gap:16px;
+    padding:14px 20px;
+    background:rgba(108,99,255,0.12);
+    border-bottom:1px solid rgba(108,99,255,0.2);
+    position:sticky;
+    top:0;
+    z-index:100;
+    backdrop-filter:blur(10px);
   }
 
-  /* ─── Sidebar ─── */
-  .sidebar {
-    position: fixed;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 240px;
-    background: var(--surface);
-    border-left: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    z-index: 100;
-    padding: 24px 16px;
+  .logo { font-size:22px; font-weight:800; color:#fff; letter-spacing:-0.5px; }
+  .logo span { color:var(--accent); }
+
+  .header-stats { display:flex; gap:12px; margin-right:auto; }
+  .hstat {
+    background:rgba(255,255,255,0.06);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:5px 14px;
+    font-size:12px;
+    font-weight:600;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .hstat .num { font-size:16px; font-weight:800; }
+  .hstat.blue .num { color:var(--accent); }
+  .hstat.green .num { color:var(--green); }
+  .hstat.red .num { color:var(--red); }
+  .hstat.yellow .num { color:var(--yellow); }
+
+  .btn-add-main {
+    background:var(--accent);
+    border:none;
+    border-radius:10px;
+    padding:8px 18px;
+    color:#fff;
+    font-family:'Tajawal',sans-serif;
+    font-size:14px;
+    font-weight:700;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    transition:all .2s;
+  }
+  .btn-add-main:hover { background:#7c74ff; transform:translateY(-1px); }
+
+  .search-wrap {
+    position:relative;
+  }
+  .search-input {
+    background:rgba(255,255,255,0.06);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:7px 14px 7px 36px;
+    color:var(--text);
+    font-family:'Tajawal',sans-serif;
+    font-size:13px;
+    outline:none;
+    width:200px;
+    transition:all .2s;
+    direction:rtl;
+  }
+  .search-input:focus { border-color:var(--accent); width:250px; }
+  .search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text3); font-size:14px; }
+
+  /* ── Board ── */
+  .board {
+    display:flex;
+    gap:14px;
+    padding:20px;
+    min-height:calc(100vh - 56px);
+    align-items:flex-start;
   }
 
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 12px 28px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 20px;
+  /* ── Column ── */
+  .col {
+    width:280px;
+    flex-shrink:0;
+    background:var(--col-bg);
+    border-radius:14px;
+    border:1px solid var(--border);
+    display:flex;
+    flex-direction:column;
+    max-height:calc(100vh - 96px);
   }
 
-  .logo-icon {
-    width: 38px;
-    height: 38px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    flex-shrink: 0;
+  .col-header {
+    padding:14px 16px 10px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    border-bottom:1px solid var(--border);
+    flex-shrink:0;
   }
 
-  .logo-text { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
-  .logo-sub { font-size: 11px; color: var(--text3); margin-top: 1px; }
-
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: all 0.2s;
-    color: var(--text2);
-    font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 2px;
-    border: none;
-    background: none;
-    width: 100%;
-    text-align: right;
+  .col-dot {
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    flex-shrink:0;
   }
 
-  .nav-item:hover { background: var(--surface2); color: var(--text); }
-  .nav-item.active { background: rgba(108,99,255,0.15); color: var(--accent); }
-  .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
-
-  .badge {
-    margin-right: auto;
-    background: var(--accent);
-    color: white;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 20px;
-    min-width: 20px;
-    text-align: center;
+  .col-title { font-size:13px; font-weight:700; flex:1; letter-spacing:0.3px; }
+  .col-count {
+    background:rgba(255,255,255,0.08);
+    border-radius:20px;
+    padding:2px 8px;
+    font-size:11px;
+    font-weight:700;
+    color:var(--text2);
+    font-family:'JetBrains Mono',monospace;
   }
 
-  .badge.red { background: var(--urgent); }
-
-  /* ─── Main ─── */
-  .main {
-    margin-right: 240px;
-    padding: 32px;
-    min-height: 100vh;
-    position: relative;
-    z-index: 1;
+  .col-body {
+    padding:10px;
+    overflow-y:auto;
+    flex:1;
+    scrollbar-width:thin;
+    scrollbar-color:rgba(255,255,255,0.1) transparent;
   }
 
-  /* ─── Header ─── */
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 32px;
-  }
-
-  .page-title { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
-  .page-sub { font-size: 13px; color: var(--text2); margin-top: 3px; }
-
-  .header-actions { display: flex; gap: 10px; align-items: center; }
-
-  /* ─── Buttons ─── */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 9px 18px;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    border: none;
-    transition: all 0.2s;
-    font-family: inherit;
-  }
-
-  .btn-primary { background: var(--accent); color: white; }
-  .btn-primary:hover { background: #7c74ff; transform: translateY(-1px); }
-  .btn-ghost { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
-  .btn-ghost:hover { color: var(--text); border-color: var(--accent); }
-  .btn-danger { background: rgba(255,71,87,0.15); color: var(--urgent); border: 1px solid rgba(255,71,87,0.2); }
-  .btn-danger:hover { background: rgba(255,71,87,0.25); }
-  .btn-success { background: rgba(67,233,123,0.15); color: var(--accent3); border: 1px solid rgba(67,233,123,0.2); }
-  .btn-sm { padding: 5px 12px; font-size: 12px; }
-
-  /* ─── Stats ─── */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    margin-bottom: 28px;
-  }
-
-  .stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px;
-    position: relative;
-    overflow: hidden;
-    transition: transform 0.2s, border-color 0.2s;
-  }
-
-  .stat-card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.12); }
-
-  .stat-card::before {
-    content: '';
-    position: absolute;
-    top: 0; right: 0;
-    width: 80px; height: 80px;
-    border-radius: 50%;
-    opacity: 0.08;
-    transform: translate(20px, -20px);
-  }
-
-  .stat-card.blue::before { background: var(--accent); }
-  .stat-card.green::before { background: var(--accent3); }
-  .stat-card.red::before { background: var(--urgent); }
-  .stat-card.yellow::before { background: var(--accent4); }
-
-  .stat-icon { font-size: 22px; margin-bottom: 12px; }
-  .stat-num { font-size: 32px; font-weight: 700; letter-spacing: -1px; font-family: 'JetBrains Mono', monospace; }
-  .stat-label { font-size: 12px; color: var(--text2); margin-top: 4px; font-weight: 500; }
-
-  /* ─── Sections ─── */
-  .section { display: none; }
-  .section.active { display: block; }
-
-  /* ─── Cards ─── */
+  /* ── Card ── */
   .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
+    background:var(--card-bg);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:12px 14px;
+    margin-bottom:8px;
+    cursor:pointer;
+    transition:all .2s;
+    animation:cardIn .25s ease;
+    position:relative;
+    overflow:hidden;
   }
 
-  .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 20px;
-    border-bottom: 1px solid var(--border);
+  @keyframes cardIn {
+    from { opacity:0; transform:translateY(-6px); }
+    to   { opacity:1; transform:translateY(0); }
   }
 
-  .card-title { font-size: 15px; font-weight: 600; }
-  .card-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
-
-  /* ─── Table ─── */
-  .tasks-table { width: 100%; border-collapse: collapse; }
-
-  .tasks-table th {
-    text-align: right;
-    padding: 12px 20px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text3);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface2);
+  .card:hover {
+    background:var(--card-hover);
+    border-color:rgba(108,99,255,0.3);
+    transform:translateY(-2px);
+    box-shadow:0 8px 24px rgba(0,0,0,0.3);
   }
 
-  .tasks-table td {
-    padding: 14px 20px;
-    font-size: 13px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    vertical-align: middle;
+  .card-accent-line {
+    position:absolute;
+    right:0; top:0; bottom:0;
+    width:3px;
+    border-radius:0 10px 10px 0;
   }
 
-  .tasks-table tr:last-child td { border-bottom: none; }
-  .tasks-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .card-top { display:flex; align-items:flex-start; gap:8px; margin-bottom:8px; }
+  .card-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+  .card-title { font-size:13px; font-weight:600; line-height:1.4; flex:1; }
+  .card-title.done-title { text-decoration:line-through; color:var(--text3); }
 
-  .task-title { font-weight: 500; display: flex; align-items: center; gap: 8px; }
-  .task-title.done { text-decoration: line-through; color: var(--text3); }
+  .card-meta { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .badge {
+    font-size:10px;
+    font-weight:700;
+    padding:2px 7px;
+    border-radius:20px;
+    display:inline-flex;
+    align-items:center;
+    gap:3px;
+  }
+  .badge-meeting { background:rgba(77,171,247,.15); color:var(--meeting); }
+  .badge-task    { background:rgba(105,219,124,.15); color:var(--task); }
+  .badge-reminder{ background:rgba(255,212,59,.15);  color:var(--reminder); }
+  .badge-urgent  { background:rgba(255,71,87,.15);   color:var(--urgent); }
+  .badge-visitor { background:rgba(108,99,255,.15);  color:var(--accent); }
 
-  .type-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 9px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
+  .card-time {
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--text2);
+    margin-right:auto;
   }
 
-  .type-meeting { background: rgba(77,171,247,0.15); color: var(--meeting); }
-  .type-task { background: rgba(105,219,124,0.15); color: var(--task); }
-  .type-reminder { background: rgba(255,212,59,0.15); color: var(--reminder); }
-  .priority-urgent { background: rgba(255,71,87,0.15); color: var(--urgent); }
+  .card-date { font-size:11px; color:var(--text3); }
 
-  .time-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: var(--text2);
-    background: var(--surface3);
-    padding: 3px 8px;
-    border-radius: 6px;
+  .card-note {
+    font-size:11px;
+    color:var(--text2);
+    margin-top:6px;
+    padding-top:6px;
+    border-top:1px solid var(--border);
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    overflow:hidden;
   }
 
-  .actions-cell { display: flex; gap: 6px; justify-content: flex-end; }
-
-  .icon-btn {
-    width: 30px; height: 30px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--surface2);
-    color: var(--text2);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px;
-    transition: all 0.15s;
+  .card-actions {
+    display:flex;
+    gap:6px;
+    margin-top:8px;
+    opacity:0;
+    transition:opacity .2s;
   }
+  .card:hover .card-actions { opacity:1; }
 
-  .icon-btn:hover { background: var(--surface3); color: var(--text); border-color: var(--accent); }
-  .icon-btn.red:hover { border-color: var(--urgent); color: var(--urgent); }
-  .icon-btn.green:hover { border-color: var(--accent3); color: var(--accent3); }
-
-  /* ─── Filters ─── */
-  .filters {
-    display: flex;
-    gap: 8px;
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
+  .btn-sm {
+    flex:1;
+    background:rgba(255,255,255,0.05);
+    border:1px solid var(--border);
+    border-radius:7px;
+    padding:5px 8px;
+    color:var(--text2);
+    font-family:'Tajawal',sans-serif;
+    font-size:11px;
+    font-weight:600;
+    cursor:pointer;
+    transition:all .15s;
+    text-align:center;
   }
+  .btn-sm:hover { color:var(--text); background:rgba(255,255,255,0.1); }
+  .btn-sm.done:hover  { border-color:var(--green);  color:var(--green); }
+  .btn-sm.del:hover   { border-color:var(--red);    color:var(--red); }
+  .btn-sm.send:hover  { border-color:var(--green);  color:var(--green); }
+  .btn-sm.edit2:hover { border-color:var(--accent); color:var(--accent); }
 
-  .filter-btn {
-    padding: 5px 14px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    background: none;
-    color: var(--text2);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: inherit;
+  /* countdown */
+  .countdown {
+    font-size:11px;
+    font-weight:700;
+    color:var(--yellow);
+    display:inline-flex;
+    align-items:center;
+    gap:3px;
   }
+  .countdown.soon { color:var(--urgent); animation:pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
 
-  .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .filter-btn.active { background: rgba(108,99,255,0.15); border-color: var(--accent); color: var(--accent); }
-
-  /* ─── Empty state ─── */
-  .empty {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text3);
+  /* add card btn */
+  .add-card-btn {
+    display:flex;
+    align-items:center;
+    gap:6px;
+    padding:8px 10px;
+    border-radius:8px;
+    color:var(--text3);
+    font-size:12px;
+    font-weight:600;
+    cursor:pointer;
+    transition:all .15s;
+    border:none;
+    background:none;
+    font-family:'Tajawal',sans-serif;
+    width:100%;
+    margin-top:4px;
   }
+  .add-card-btn:hover { color:var(--text2); background:rgba(255,255,255,0.04); }
 
-  .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
-  .empty-text { font-size: 15px; color: var(--text2); }
-  .empty-sub { font-size: 13px; margin-top: 6px; }
+  /* ── Empty State ── */
+  .empty-col { text-align:center; padding:30px 10px; color:var(--text3); }
+  .empty-col .ei { font-size:32px; margin-bottom:8px; opacity:.5; }
+  .empty-col p  { font-size:12px; }
 
-  /* ─── Modal ─── */
-  .modal-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.7);
-    backdrop-filter: blur(4px);
-    z-index: 1000;
-    display: flex; align-items: center; justify-content: center;
-    opacity: 0; pointer-events: none;
-    transition: opacity 0.2s;
-  }
-
-  .modal-overlay.open { opacity: 1; pointer-events: all; }
-
-  .modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    width: 480px;
-    max-width: 95vw;
-    padding: 28px;
-    transform: translateY(20px);
-    transition: transform 0.2s;
-    box-shadow: var(--shadow);
-  }
-
-  .modal-overlay.open .modal { transform: translateY(0); }
-
-  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-  .modal-title { font-size: 18px; font-weight: 700; }
-  .modal-close { background: var(--surface2); border: 1px solid var(--border); color: var(--text2); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
-  .modal-close:hover { color: var(--text); }
-
-  /* ─── Form ─── */
-  .form-group { margin-bottom: 18px; }
-  .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 7px; text-transform: uppercase; letter-spacing: 0.5px; }
-
-  .form-input, .form-select {
-    width: 100%;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    color: var(--text);
-    font-size: 14px;
-    font-family: inherit;
-    transition: border-color 0.15s;
-    outline: none;
-    direction: rtl;
-  }
-
-  .form-input:focus, .form-select:focus { border-color: var(--accent); }
-  .form-select option { background: var(--surface2); }
-
-  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
-
-  /* ─── Working hours ─── */
-  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px; }
-
-  .days-picker { display: flex; flex-wrap: wrap; gap: 8px; }
-
-  .day-btn {
-    width: 42px; height: 42px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--surface2);
-    color: var(--text2);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    transition: all 0.15s;
-    font-family: inherit;
-  }
-
-  .day-btn.active { background: rgba(108,99,255,0.2); border-color: var(--accent); color: var(--accent); }
-
-  /* ─── Appointment requests ─── */
+  /* ── Requests Column ── */
   .request-card {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px 20px;
-    margin: 12px 20px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    transition: border-color 0.2s;
+    background:rgba(108,99,255,0.08);
+    border:1px solid rgba(108,99,255,0.2);
+    border-radius:10px;
+    padding:12px;
+    margin-bottom:8px;
+    transition:all .2s;
   }
-
-  .request-card:hover { border-color: rgba(255,255,255,0.12); }
-
-  .request-avatar {
-    width: 40px; height: 40px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
+  .request-card:hover { border-color:rgba(108,99,255,0.4); }
+  .req-name { font-size:13px; font-weight:700; margin-bottom:4px; }
+  .req-detail { font-size:12px; color:var(--text2); margin-bottom:8px; }
+  .req-actions { display:flex; gap:6px; }
+  .btn-approve {
+    flex:1; background:rgba(46,204,113,.1); border:1px solid rgba(46,204,113,.3);
+    color:var(--green); border-radius:7px; padding:5px; font-size:11px;
+    font-weight:700; cursor:pointer; font-family:'Tajawal',sans-serif;
+    transition:all .15s;
   }
-
-  .request-info { flex: 1; }
-  .request-name { font-weight: 600; font-size: 14px; }
-  .request-detail { font-size: 12px; color: var(--text2); margin-top: 3px; }
-  .request-time { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--accent); }
-
-  .status-badge {
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
+  .btn-reject  {
+    flex:1; background:rgba(231,76,60,.1);  border:1px solid rgba(231,76,60,.3);
+    color:var(--red);  border-radius:7px; padding:5px; font-size:11px;
+    font-weight:700; cursor:pointer; font-family:'Tajawal',sans-serif;
+    transition:all .15s;
   }
+  .btn-approve:hover { background:rgba(46,204,113,.2); }
+  .btn-reject:hover  { background:rgba(231,76,60,.2); }
 
-  .status-pending { background: rgba(247,151,30,0.15); color: var(--accent4); }
-  .status-approved { background: rgba(67,233,123,0.15); color: var(--accent3); }
-  .status-rejected { background: rgba(255,71,87,0.15); color: var(--urgent); }
+  /* ── Modal ── */
+  .overlay {
+    position:fixed; inset:0;
+    background:rgba(0,0,0,.7);
+    backdrop-filter:blur(6px);
+    z-index:200;
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none;
+    transition:opacity .2s;
+  }
+  .overlay.open { opacity:1; pointer-events:all; }
+  .modal {
+    background:#1e2235;
+    border:1px solid var(--border);
+    border-radius:18px;
+    padding:28px;
+    width:460px;
+    max-width:95vw;
+    transform:scale(.95);
+    transition:transform .2s;
+    box-shadow:0 24px 64px rgba(0,0,0,.5);
+  }
+  .overlay.open .modal { transform:scale(1); }
+  .modal-title { font-size:18px; font-weight:800; margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; }
+  .close-btn { background:none; border:none; color:var(--text2); font-size:18px; cursor:pointer; }
 
-  /* ─── Toast ─── */
+  .form-group { margin-bottom:14px; }
+  .form-label { display:block; font-size:11px; font-weight:700; color:var(--text2); margin-bottom:6px; text-transform:uppercase; letter-spacing:.5px; }
+  .form-input, .form-select {
+    width:100%;
+    background:rgba(255,255,255,0.05);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:10px 14px;
+    color:var(--text);
+    font-family:'Tajawal',sans-serif;
+    font-size:14px;
+    outline:none;
+    transition:border-color .15s;
+    direction:rtl;
+  }
+  .form-input:focus, .form-select:focus { border-color:var(--accent); }
+  .form-select option { background:#1e2235; }
+  .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+  .btn-save {
+    width:100%;
+    background:var(--accent);
+    border:none;
+    border-radius:10px;
+    padding:12px;
+    color:#fff;
+    font-family:'Tajawal',sans-serif;
+    font-size:15px;
+    font-weight:700;
+    cursor:pointer;
+    margin-top:6px;
+    transition:all .2s;
+  }
+  .btn-save:hover { background:#7c74ff; }
+
+  /* Toast */
   .toast {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%) translateY(100px);
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 20px;
-    font-size: 13px;
-    font-weight: 500;
-    z-index: 9999;
-    transition: transform 0.3s ease;
-    box-shadow: var(--shadow);
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    position:fixed; bottom:24px; left:50%;
+    transform:translateX(-50%) translateY(100px);
+    background:#1e2235;
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:12px 20px;
+    font-size:13px;
+    font-weight:600;
+    z-index:999;
+    transition:transform .3s;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
   }
+  .toast.show { transform:translateX(-50%) translateY(0); }
+  .toast.ok  { border-color:rgba(46,204,113,.3); color:var(--green); }
+  .toast.err { border-color:rgba(231,76,60,.3);  color:var(--red); }
 
-  .toast.show { transform: translateX(-50%) translateY(0); }
-  .toast.success { border-color: rgba(67,233,123,0.3); color: var(--accent3); }
-  .toast.error { border-color: rgba(255,71,87,0.3); color: var(--urgent); }
-
-  /* ─── Loading ─── */
-  .spinner {
-    width: 20px; height: 20px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    margin: 40px auto;
-  }
-
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* ─── Scrollbar ─── */
-  ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 2px; }
-
-  /* ─── Animations ─── */
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-  .animate-in { animation: fadeIn 0.3s ease forwards; }
-
-  /* ─── Responsive ─── */
-  @media (max-width: 1024px) {
-    .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  }
-
-  @media (max-width: 768px) {
-    .sidebar { display: none; }
-    .main { margin-right: 0; padding: 20px; }
-  }
+  /* spinner */
+  .spinner { width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;margin:30px auto; }
+  @keyframes spin { to{transform:rotate(360deg)} }
 </style>
 </head>
 <body>
 
-<!-- Sidebar -->
-<aside class="sidebar">
-  <div class="logo">
-    <div class="logo-icon">✨</div>
-    <div>
-      <div class="logo-text">مهامي</div>
-      <div class="logo-sub">لوحة التحكم</div>
-    </div>
+<!-- Header -->
+<div class="header">
+  <div class="logo">📋 <span>مهامي</span></div>
+
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input class="search-input" type="text" placeholder="بحث..." id="searchInput" oninput="filterCards()">
   </div>
 
-  <button class="nav-item active" onclick="showSection('dashboard')">
-    <span class="icon">📊</span> الرئيسية
-  </button>
-  <button class="nav-item" onclick="showSection('tasks')">
-    <span class="icon">✅</span> المهام
-    <span class="badge" id="tasks-badge">0</span>
-  </button>
-  <button class="nav-item" onclick="showSection('appointments')">
-    <span class="icon">📅</span> طلبات المواعيد
-    <span class="badge red" id="appt-badge" style="display:none">0</span>
-  </button>
-  <button class="nav-item" onclick="showSection('visitors')">
-    <span class="icon">👤</span> تذكيرات الزوار
-  </button>
-  <button class="nav-item" onclick="showSection('settings')">
-    <span class="icon">⚙️</span> الإعدادات
-  </button>
-</aside>
+  <div class="header-stats">
+    <div class="hstat blue"><span class="num" id="h-pending">—</span> معلقة</div>
+    <div class="hstat green"><span class="num" id="h-done">—</span> منجزة</div>
+    <div class="hstat red"><span class="num" id="h-overdue">—</span> متأخرة</div>
+    <div class="hstat yellow"><span class="num" id="h-today">—</span> اليوم</div>
+  </div>
 
-<!-- Main Content -->
-<main class="main">
+  <button class="btn-add-main" onclick="openModal()">+ مهمة جديدة</button>
 
-  <!-- ═══ Dashboard ═══ -->
-  <section class="section active" id="section-dashboard">
-    <div class="page-header">
-      <div>
-        <div class="page-title">مرحباً عبدالعزيز 👋</div>
-        <div class="page-sub" id="current-date">جاري التحميل...</div>
-      </div>
-      <div class="header-actions">
-        <button class="btn btn-ghost" onclick="refreshAll()">🔄 تحديث</button>
-        <button class="btn btn-primary" onclick="openAddModal()">+ مهمة جديدة</button>
-      </div>
-    </div>
+  <button onclick="refreshAll()" style="background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:10px;padding:8px 14px;color:var(--text2);cursor:pointer;font-size:14px;">🔄</button>
+</div>
 
-    <div class="stats-grid">
-      <div class="stat-card blue animate-in">
-        <div class="stat-icon">📋</div>
-        <div class="stat-num" id="stat-pending">—</div>
-        <div class="stat-label">مهام معلقة</div>
-      </div>
-      <div class="stat-card yellow animate-in" style="animation-delay:0.05s">
-        <div class="stat-icon">📅</div>
-        <div class="stat-num" id="stat-today">—</div>
-        <div class="stat-label">مهام اليوم</div>
-      </div>
-      <div class="stat-card green animate-in" style="animation-delay:0.1s">
-        <div class="stat-icon">✅</div>
-        <div class="stat-num" id="stat-done">—</div>
-        <div class="stat-label">منجزة هذا الأسبوع</div>
-      </div>
-      <div class="stat-card red animate-in" style="animation-delay:0.15s">
-        <div class="stat-icon">🔴</div>
-        <div class="stat-num" id="stat-urgent">—</div>
-        <div class="stat-label">مهام عاجلة</div>
-      </div>
-    </div>
+<!-- Board -->
+<div class="board" id="board">
+  <!-- Columns rendered by JS -->
+</div>
 
-    <!-- Overdue tasks -->
-    <div class="card animate-in" id="overdue-card" style="animation-delay:0.18s;margin-bottom:20px;border-color:rgba(255,71,87,0.2);display:none">
-      <div class="card-header" style="border-color:rgba(255,71,87,0.15)">
-        <div>
-          <div class="card-title" style="color:var(--urgent)">⚠️ مهام فات وقتها ولم تُنجز</div>
-          <div class="card-sub">ستصلك تنبيهات يومية الساعة 9 ص حتى إنجازها</div>
-        </div>
-        <span id="overdue-count" class="badge red">0</span>
-      </div>
-      <table class="tasks-table">
-        <thead>
-          <tr><th>المهمة</th><th>النوع</th><th>كان المقرر</th><th>طلبها</th><th></th></tr>
-        </thead>
-        <tbody id="overdue-body"></tbody>
-      </table>
-    </div>
-
-    <!-- Today's tasks -->
-    <div class="card animate-in" style="animation-delay:0.2s">
-      <div class="card-header">
-        <div>
-          <div class="card-title">مهام اليوم</div>
-          <div class="card-sub" id="today-label">—</div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="showSection('tasks')">عرض الكل</button>
-      </div>
-      <table class="tasks-table">
-        <thead>
-          <tr>
-            <th>المهمة</th>
-            <th>النوع</th>
-            <th>الوقت</th>
-            <th>الحالة</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="today-tasks-body">
-          <tr><td colspan="5"><div class="spinner"></div></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ═══ Tasks ═══ -->
-  <section class="section" id="section-tasks">
-    <div class="page-header">
-      <div>
-        <div class="page-title">المهام</div>
-        <div class="page-sub">إدارة كاملة لجميع مهامك</div>
-      </div>
-      <div class="header-actions">
-        <button class="btn btn-ghost" onclick="refreshAll()">🔄 تحديث</button>
-        <button class="btn btn-primary" onclick="openAddModal()">+ مهمة جديدة</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="filters">
-        <button class="filter-btn active" onclick="filterTasks('all', this)">الكل</button>
-        <button class="filter-btn" onclick="filterTasks('pending', this)">المعلقة</button>
-        <button class="filter-btn" onclick="filterTasks('done', this)">المنجزة</button>
-        <button class="filter-btn" onclick="filterTasks('today', this)">اليوم</button>
-        <button class="filter-btn" onclick="filterTasks('meeting', this)">📅 اجتماعات</button>
-        <button class="filter-btn" onclick="filterTasks('urgent', this)">🔴 عاجل</button>
-        <button class="filter-btn" onclick="filterTasks('overdue', this)">⚠️ متأخرة</button>
-      </div>
-      <table class="tasks-table">
-        <thead>
-          <tr>
-            <th>المهمة</th>
-            <th>النوع</th>
-            <th>التاريخ</th>
-            <th>الوقت</th>
-            <th>الأولوية</th>
-            <th>الحالة</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="all-tasks-body">
-          <tr><td colspan="7"><div class="spinner"></div></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ═══ Appointments ═══ -->
-  <section class="section" id="section-appointments">
-    <div class="page-header">
-      <div>
-        <div class="page-title">طلبات المواعيد</div>
-        <div class="page-sub">الطلبات الواردة من الزوار</div>
-      </div>
-      <button class="btn btn-ghost" onclick="refreshAll()">🔄 تحديث</button>
-    </div>
-    <div class="card" id="appointments-container">
-      <div class="spinner"></div>
-    </div>
-  </section>
-
-  <!-- ═══ Visitors ═══ -->
-  <section class="section" id="section-visitors">
-    <div class="page-header">
-      <div>
-        <div class="page-title">تذكيرات الزوار</div>
-        <div class="page-sub">التذكيرات الشخصية للزوار</div>
-      </div>
-      <button class="btn btn-ghost" onclick="refreshAll()">🔄 تحديث</button>
-    </div>
-    <div class="card">
-      <table class="tasks-table">
-        <thead>
-          <tr>
-            <th>التذكير</th>
-            <th>رقم الهاتف</th>
-            <th>التاريخ</th>
-            <th>الوقت</th>
-            <th>الحالة</th>
-          </tr>
-        </thead>
-        <tbody id="visitors-body">
-          <tr><td colspan="5"><div class="spinner"></div></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ═══ Settings ═══ -->
-  <section class="section" id="section-settings">
-    <div class="page-header">
-      <div>
-        <div class="page-title">الإعدادات</div>
-        <div class="page-sub">ساعات الدوام والجدولة الذكية</div>
-      </div>
-      <button class="btn btn-primary" onclick="saveSettings()">💾 حفظ</button>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">⏰ ساعات الدوام</div>
-      </div>
-      <div class="settings-grid">
-        <div class="form-group">
-          <label class="form-label">وقت البداية</label>
-          <input type="time" class="form-input" id="setting-start" value="10:00">
-        </div>
-        <div class="form-group">
-          <label class="form-label">وقت النهاية</label>
-          <input type="time" class="form-input" id="setting-end" value="18:00">
-        </div>
-        <div class="form-group" style="grid-column: 1 / -1;">
-          <label class="form-label">المسافة بين المواعيد (دقيقة)</label>
-          <input type="number" class="form-input" id="setting-gap" value="60" min="15" max="120">
-        </div>
-        <div class="form-group" style="grid-column: 1 / -1;">
-          <label class="form-label">أيام العمل</label>
-          <div class="days-picker" id="days-picker">
-            <button class="day-btn active" data-day="6">سبت</button>
-            <button class="day-btn active" data-day="0">أحد</button>
-            <button class="day-btn active" data-day="1">اثن</button>
-            <button class="day-btn active" data-day="2">ثلاث</button>
-            <button class="day-btn active" data-day="3">أربع</button>
-            <button class="day-btn active" data-day="4">خميس</button>
-            <button class="day-btn" data-day="5">جمعة</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-</main>
-
-<!-- ═══ Add/Edit Modal ═══ -->
-<div class="modal-overlay" id="task-modal">
+<!-- Modal -->
+<div class="overlay" id="modal" onclick="closeModalBg(event)">
   <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title" id="modal-title">مهمة جديدة</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
+    <div class="modal-title">
+      <span id="modal-title-text">➕ مهمة جديدة</span>
+      <button class="close-btn" onclick="closeModal()">✕</button>
     </div>
     <div class="form-group">
       <label class="form-label">العنوان</label>
@@ -786,466 +482,269 @@
       </div>
       <div class="form-group">
         <label class="form-label">الوقت</label>
-        <div style="display:flex;gap:6px">
-          <select class="form-select" id="f-hour" style="flex:1">
-            <option value="01">1</option><option value="02">2</option><option value="03">3</option>
-            <option value="04">4</option><option value="05">5</option><option value="06">6</option>
-            <option value="07">7</option><option value="08">8</option><option value="09">9</option>
-            <option value="10">10</option><option value="11">11</option><option value="12">12</option>
-          </select>
-          <select class="form-select" id="f-min" style="flex:1">
-            <option value="00">00</option><option value="05">05</option>
-            <option value="10">10</option><option value="15">15</option>
-            <option value="20">20</option><option value="25">25</option>
-            <option value="30">30</option><option value="35">35</option>
-            <option value="40">40</option><option value="45">45</option>
-            <option value="50">50</option><option value="55">55</option>
-          </select>
-          <select class="form-select" id="f-ampm" style="flex:1">
-            <option value="am">ص</option>
-            <option value="pm">م</option>
-          </select>
-        </div>
+        <input class="form-input" type="time" id="f-time">
       </div>
     </div>
     <div class="form-group">
       <label class="form-label">ملاحظة</label>
       <input class="form-input" id="f-note" placeholder="ملاحظة اختيارية...">
     </div>
-    <div class="form-group" id="f-location-group" style="display:none">
-      <label class="form-label">الموقع</label>
-      <input class="form-input" id="f-location" placeholder="رابط قوقل ماب أو اسم المكان...">
-    </div>
-    <div class="form-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">إلغاء</button>
-      <button class="btn btn-primary" onclick="saveTask()">حفظ</button>
-    </div>
+    <button class="btn-save" onclick="saveTask()">حفظ ✓</button>
   </div>
 </div>
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script>
-// ─── Config ───────────────────────────────────────────────────────────────
 const API = window.location.origin;
-let allTasks = [];
+let allTasks = [], allRequests = [];
 let editingId = null;
-let currentFilter = 'all';
 
-// ─── Init ─────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  updateDate();
+// ── Column Definitions ──────────────────────────────────────────────────────
+const COLUMNS = [
+  { id:'overdue',  title:'⚠️ متأخرة',   dot:'#ff4757', color:'#ff4757' },
+  { id:'today',    title:'📌 اليوم',     dot:'#6c63ff', color:'#6c63ff' },
+  { id:'upcoming', title:'🗓️ القادمة',  dot:'#4dabf7', color:'#4dabf7' },
+  { id:'requests', title:'📬 طلبات الزوار', dot:'#f1c40f', color:'#f1c40f' },
+  { id:'done',     title:'✅ المنجزة',   dot:'#2ecc71', color:'#2ecc71' },
+];
+
+// ── Init ────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('f-date').value = new Date().toLocaleDateString('en-CA');
+  renderBoard();
   refreshAll();
   setInterval(refreshAll, 30000);
-
-  // Show location field for meetings
-  document.getElementById('f-type').addEventListener('change', e => {
-    document.getElementById('f-location-group').style.display = e.target.value === 'meeting' ? 'block' : 'none';
-  });
-
-  // Days picker
-  document.querySelectorAll('.day-btn').forEach(btn => {
-    btn.addEventListener('click', () => btn.classList.toggle('active'));
-  });
+  setInterval(updateCountdowns, 60000);
 });
 
-function updateDate() {
-  const now = new Date();
-  const opts = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Riyadh' };
-  document.getElementById('current-date').textContent = now.toLocaleDateString('ar-SA', opts);
-  document.getElementById('today-label').textContent = now.toLocaleDateString('ar-SA', opts);
+function todayStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Riyadh' });
 }
 
-function todayRiyadh() {
-  return new Date().toLocaleDateString('en-CA', {timeZone: 'Asia/Riyadh'});
-}
-
-// ─── Navigation ───────────────────────────────────────────────────────────
-function showSection(name) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById('section-' + name).classList.add('active');
-  event?.currentTarget?.classList.add('active');
-}
-
-// ─── Data ─────────────────────────────────────────────────────────────────
-async function refreshAll() {
-  await Promise.all([loadTasks(), loadAppointments(), loadVisitors(), loadSettings()]);
-}
-
-async function loadTasks() {
-  try {
-    const res = await fetch(API + '/tasks');
-    allTasks = await res.json();
-    renderStats();
-    renderTodayTasks();
-    renderAllTasks();
-  } catch(e) { showToast('خطأ في تحميل المهام', 'error'); }
-}
-
-async function loadAppointments() {
-  try {
-    const res = await fetch(API + '/appointment-requests');
-    const data = await res.json();
-    renderAppointments(data);
-    const pending = data.filter(r => r.status === 'pending').length;
-    const badge = document.getElementById('appt-badge');
-    if (pending > 0) { badge.textContent = pending; badge.style.display = ''; }
-    else badge.style.display = 'none';
-  } catch(e) {}
-}
-
-async function loadVisitors() {
-  try {
-    const res = await fetch(API + '/visitor-reminders');
-    const data = await res.json();
-    renderVisitors(data);
-  } catch(e) {}
-}
-
-async function loadSettings() {
-  try {
-    const res = await fetch(API + '/working-hours');
-    const wh = await res.json();
-    if (!wh) return;
-    document.getElementById('setting-start').value = wh.start_time || '10:00';
-    document.getElementById('setting-end').value = wh.end_time || '18:00';
-    document.getElementById('setting-gap').value = wh.gap_minutes || 60;
-    const activeDays = (wh.working_days || '6,0,1,2,3,4').split(',').map(Number);
-    document.querySelectorAll('.day-btn').forEach(btn => {
-      const day = parseInt(btn.dataset.day);
-      btn.classList.toggle('active', activeDays.includes(day));
-    });
-  } catch(e) {}
-}
-
-// ─── Stats ────────────────────────────────────────────────────────────────
-function renderStats() {
-  const today = todayRiyadh();
-  const weekAgo = new Date(Date.now() - 7*86400000).toLocaleDateString('en-CA', {timeZone:'Asia/Riyadh'});
-
-  document.getElementById('stat-pending').textContent = allTasks.filter(t => !t.done).length;
-  document.getElementById('stat-today').textContent = allTasks.filter(t => !t.done && t.date === today).length;
-  document.getElementById('stat-done').textContent = allTasks.filter(t => t.done && t.created_at >= weekAgo).length;
-  document.getElementById('stat-urgent').textContent = allTasks.filter(t => !t.done && t.priority === 'urgent').length;
-  document.getElementById('tasks-badge').textContent = allTasks.filter(t => !t.done).length;
-
-  // Overdue
-  const todayStr = todayRiyadh();
-  const overdue = allTasks.filter(t => !t.done && t.date < todayStr);
-  const overdueCard = document.getElementById('overdue-card');
-  if (overdue.length > 0) {
-    overdueCard.style.display = 'block';
-    document.getElementById('overdue-count').textContent = overdue.length;
-    document.getElementById('overdue-body').innerHTML = overdue.map(t => {
-      const [icon, label, cls] = typeLabel(t.type);
-      const requester = t.requested_by_name
-        ? '<span style="font-size:11px;background:rgba(108,99,255,0.15);color:var(--accent);padding:2px 8px;border-radius:20px">👤 ' + t.requested_by_name + '</span>'
-        : '<span style="color:var(--text3);font-size:11px">أنت</span>';
-      return '<tr>' +
-        '<td><div class="task-title">' + (t.priority==='urgent'?'🔴 ':'') + t.title + '</div></td>' +
-        '<td><span class="type-badge ' + cls + '">' + icon + ' ' + label + '</span></td>' +
-        '<td style="font-size:12px;color:var(--urgent)">📅 ' + t.date + ' ⏰ ' + fmt12(t.time) + '</td>' +
-        '<td>' + requester + '</td>' +
-        '<td><div class="actions-cell">' +
-          '<button class="icon-btn green" onclick="completeTask(' + t.id + ')" title="إنجاز">✓</button>' +
-          '<button class="icon-btn red" onclick="deleteTask(' + t.id + ')" title="حذف">🗑</button>' +
-        '</div></td>' +
-      '</tr>';
-    }).join('');
-  } else {
-    overdueCard.style.display = 'none';
-  }
-}
-
-// ─── Render Tasks ─────────────────────────────────────────────────────────
 function fmt12(t) {
   if (!t) return '';
-  const [h, m] = t.split(':').map(Number);
-  const p = h < 12 ? 'ص' : 'م';
-  const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2,'0')} ${p}`;
+  const [h,m] = t.split(':').map(Number);
+  return (h%12||12) + ':' + String(m).padStart(2,'0') + ' ' + (h<12?'ص':'م');
 }
 
-function typeLabel(type) {
-  const map = { meeting: ['📅', 'اجتماع', 'type-meeting'], task: ['✅', 'مهمة', 'type-task'], reminder: ['🔔', 'تذكير', 'type-reminder'] };
-  return map[type] || ['📌', 'مهمة', 'type-task'];
+function countdown(task) {
+  if (!task.time || task.done) return '';
+  const dt = new Date(task.date + 'T' + task.time);
+  const diff = dt - new Date();
+  if (diff <= 0 || diff > 86400000) return '';
+  const h = Math.floor(diff/3600000);
+  const m = Math.floor((diff%3600000)/60000);
+  const soon = diff < 3600000;
+  return `<span class="countdown ${soon?'soon':''}">⏳ ${h>0?h+'س ':''}${m}د</span>`;
 }
 
-function renderTodayTasks() {
-  const today = todayRiyadh();
-  const tasks = allTasks.filter(t => !t.done && t.date === today).sort((a,b) => a.time?.localeCompare(b.time));
-  const tbody = document.getElementById('today-tasks-body');
-
-  if (!tasks.length) {
-    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">🎉</div><div class="empty-text">لا توجد مهام لليوم</div></div></td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = tasks.map(function(t) {
-    var tl = typeLabel(t.type);
-    var icon = tl[0], label = tl[1], cls = tl[2];
-    var reqBadge = t.requested_by_name
-      ? '<span style="font-size:10px;background:rgba(108,99,255,0.15);color:var(--accent);padding:1px 7px;border-radius:20px;display:inline-block;margin-top:4px">👤 ' + t.requested_by_name + '</span>'
-      : '';
-    var noteBadge = t.note ? '<div style="font-size:11px;color:var(--text3);margin-top:3px">📝 ' + t.note + '</div>' : '';
-    var doneBtn = !t.done ? '<button class="icon-btn green" onclick="completeTask(' + t.id + ')" title="إنجاز">✓</button>' : '';
-    var urgentBadge = t.priority === 'urgent'
-      ? '<span class="type-badge priority-urgent">🔴 عاجل</span>'
-      : '<span style="color:var(--text3);font-size:12px">عادي</span>';
-    return '<tr>' +
-      '<td><div class="task-title ' + (t.done ? 'done' : '') + '">' + (t.priority==='urgent' ? '🔴 ' : '') + t.title + '</div>' + reqBadge + noteBadge + '</td>' +
-      '<td><span class="type-badge ' + cls + '">' + icon + ' ' + label + '</span></td>' +
-      '<td style="font-size:12px;color:var(--text2)">' + (t.date || '—') + '</td>' +
-      '<td><span class="time-badge">' + (fmt12(t.time) || '—') + '</span></td>' +
-      '<td>' + urgentBadge + '</td>' +
-      '<td><span class="status-badge ' + (t.done ? 'status-approved' : 'status-pending') + '">' + (t.done ? 'منجزة' : 'معلقة') + '</span></td>' +
-      '<td><div class="actions-cell">' + doneBtn +
-        '<button class="icon-btn" onclick="sendReminder(' + t.id + ')" title="إرسال تذكير">🔔</button>' +
-        '<button class="icon-btn" onclick="openEditModal(' + t.id + ')" title="تعديل">✏️</button>' +
-        '<button class="icon-btn red" onclick="deleteTask(' + t.id + ')" title="حذف">🗑</button>' +
-      '</div></td>' +
-    '</tr>';
-  }).join('');
+// ── Load Data ───────────────────────────────────────────────────────────────
+async function refreshAll() {
+  try {
+    const [tasksRes, reqRes] = await Promise.all([
+      fetch(API + '/tasks'),
+      fetch(API + '/appointment-requests')
+    ]);
+    allTasks    = await tasksRes.json();
+    allRequests = await reqRes.json();
+    renderBoard();
+    updateStats();
+  } catch(e) { console.error(e); }
 }
 
-function filterTasks(filter, btn) {
-  currentFilter = filter;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderAllTasks();
+// ── Stats ────────────────────────────────────────────────────────────────────
+function updateStats() {
+  const today = todayStr();
+  const pending = allTasks.filter(t => !t.done);
+  const done    = allTasks.filter(t => t.done);
+  const overdue = pending.filter(t => t.date && t.date < today);
+  const todayT  = pending.filter(t => t.date === today);
+  document.getElementById('h-pending').textContent = pending.length;
+  document.getElementById('h-done').textContent    = done.length;
+  document.getElementById('h-overdue').textContent = overdue.length;
+  document.getElementById('h-today').textContent   = todayT.length;
 }
 
-function renderAllTasks() {
-  const today = todayRiyadh();
-  let tasks = [...allTasks];
+// ── Render Board ─────────────────────────────────────────────────────────────
+function renderBoard() {
+  const board = document.getElementById('board');
+  const today = todayStr();
+  const q     = document.getElementById('searchInput').value.toLowerCase();
 
-  if (currentFilter === 'pending') tasks = tasks.filter(t => !t.done);
-  else if (currentFilter === 'done') tasks = tasks.filter(t => t.done);
-  else if (currentFilter === 'today') tasks = tasks.filter(t => t.date === today);
-  else if (currentFilter === 'meeting') tasks = tasks.filter(t => t.type === 'meeting' && !t.done);
-  else if (currentFilter === 'urgent') tasks = tasks.filter(t => t.priority === 'urgent' && !t.done);
-  else if (currentFilter === 'overdue') tasks = tasks.filter(t => !t.done && t.date < today);
+  const filtered = allTasks.filter(t =>
+    !q || t.title.toLowerCase().includes(q) || (t.note||'').toLowerCase().includes(q)
+  );
 
-  tasks.sort((a,b) => (a.date||'').localeCompare(b.date||'') || (a.time||'').localeCompare(b.time||''));
+  const groups = {
+    overdue:  filtered.filter(t => !t.done && t.date && t.date < today),
+    today:    filtered.filter(t => !t.done && t.date === today),
+    upcoming: filtered.filter(t => !t.done && (!t.date || t.date > today)),
+    requests: allRequests.filter(r => r.status === 'pending' || r.status === 'awaiting_visitor_confirm'),
+    done:     filtered.filter(t => t.done).slice(0,10),
+  };
 
-  const tbody = document.getElementById('all-tasks-body');
-  if (!tasks.length) {
-    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-icon">✅</div><div class="empty-text">لا توجد مهام</div></div></td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = tasks.map(function(t) {
-    var tl = typeLabel(t.type);
-    var icon = tl[0], label = tl[1], cls = tl[2];
-    var doneBtn = !t.done
-      ? '<button class="icon-btn green" onclick="completeTask(' + t.id + ')" title="إنجاز">✓</button>'
-      : '<button class="icon-btn" onclick="undoTask(' + t.id + ')" title="إلغاء إنجاز" style="font-size:11px">↩</button>';
-    var urgentBadge = t.priority === 'urgent'
-      ? '<span class="type-badge priority-urgent">🔴 عاجل</span>'
-      : '<span style="color:var(--text3);font-size:12px">عادي</span>';
-    return '<tr>' +
-      '<td><div class="task-title ' + (t.done ? 'done' : '') + '">' + (t.priority==='urgent' ? '🔴 ' : '') + t.title + '</div></td>' +
-      '<td><span class="type-badge ' + cls + '">' + icon + ' ' + label + '</span></td>' +
-      '<td style="font-size:12px;color:var(--text2)">' + (t.date || '—') + '</td>' +
-      '<td><span class="time-badge">' + (fmt12(t.time) || '—') + '</span></td>' +
-      '<td>' + urgentBadge + '</td>' +
-      '<td><span class="status-badge ' + (t.done ? 'status-approved' : 'status-pending') + '">' + (t.done ? 'منجزة' : 'معلقة') + '</span></td>' +
-      '<td><div class="actions-cell">' + doneBtn +
-        '<button class="icon-btn" onclick="sendReminder(' + t.id + ')" title="إرسال تذكير">🔔</button>' +
-        '<button class="icon-btn" onclick="openEditModal(' + t.id + ')" title="تعديل">✏️</button>' +
-        '<button class="icon-btn red" onclick="deleteTask(' + t.id + ')" title="حذف">🗑</button>' +
-      '</div></td>' +
-    '</tr>';
-  }).join('');
-}
-
-function renderAppointments(data) {
-  const container = document.getElementById('appointments-container');
-  if (!data.length) {
-    container.innerHTML = `<div class="empty"><div class="empty-icon">📅</div><div class="empty-text">لا توجد طلبات مواعيد</div></div>`;
-    return;
-  }
-
-  const statusMap = { pending: ['status-pending','⏳ معلق'], approved: ['status-approved','✅ مقبول'], rejected: ['status-rejected','❌ مرفوض'] };
-
-  container.innerHTML = data.map(r => {
-    const [cls, label] = statusMap[r.status] || ['status-pending','معلق'];
-    return `<div class="request-card">
-      <div class="request-avatar">👤</div>
-      <div class="request-info">
-        <div class="request-name">${r.name}</div>
-        <div class="request-detail">📌 ${r.title} · <span class="request-time">${fmt12(r.proposed_time)} — ${r.proposed_date}</span></div>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">📱 ${r.phone}</div>
+  board.innerHTML = COLUMNS.map(col => `
+    <div class="col" id="col-${col.id}">
+      <div class="col-header">
+        <div class="col-dot" style="background:${col.dot}"></div>
+        <div class="col-title">${col.title}</div>
+        <div class="col-count">${col.id==='requests' ? groups.requests.length : groups[col.id].length}</div>
       </div>
-      <span class="status-badge ${cls}">${label}</span>
-    </div>`;
-  }).join('');
-}
-
-function renderVisitors(data) {
-  const tbody = document.getElementById('visitors-body');
-  if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">👤</div><div class="empty-text">لا توجد تذكيرات للزوار</div></div></td></tr>`;
-    return;
-  }
-  tbody.innerHTML = data.map(r => `
-    <tr>
-      <td><div class="task-title">${r.title}</div></td>
-      <td style="font-size:12px;font-family:monospace;color:var(--text2)">${r.phone}</td>
-      <td style="font-size:12px;color:var(--text2)">${r.date||'—'}</td>
-      <td><span class="time-badge">${fmt12(r.time)||'—'}</span></td>
-      <td><span class="status-badge ${r.done?'status-approved':'status-pending'}">${r.done?'أُرسل':'معلق'}</span></td>
-    </tr>
+      <div class="col-body" id="body-${col.id}">
+        ${col.id === 'requests' ? renderRequests(groups.requests) : renderCards(groups[col.id], col)}
+        ${col.id !== 'requests' && col.id !== 'done' ? `<button class="add-card-btn" onclick="openModal()">+ إضافة مهمة</button>` : ''}
+      </div>
+    </div>
   `).join('');
 }
 
-// ─── CRUD ─────────────────────────────────────────────────────────────────
-async function completeTask(id) {
-  try {
-    await fetch(API + '/tasks/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({done:true}) });
-    showToast('✅ تم إنجاز المهمة!', 'success');
-    loadTasks();
-  } catch(e) { showToast('خطأ!', 'error'); }
+function renderCards(tasks, col) {
+  if (!tasks.length) return `<div class="empty-col"><div class="ei">${col.id==='done'?'🎉':'📭'}</div><p>${col.id==='done'?'لا توجد منجزة':'لا توجد مهام'}</p></div>`;
+  return tasks.map(t => cardHTML(t, col)).join('');
 }
 
+function cardHTML(t, col) {
+  const typeIcon  = t.type==='meeting'?'📅':t.type==='reminder'?'🔔':'✅';
+  const typeBadge = t.type==='meeting'?'badge-meeting':t.type==='reminder'?'badge-reminder':'badge-task';
+  const typeLabel = t.type==='meeting'?'اجتماع':t.type==='reminder'?'تذكير':'مهمة';
+  const accentClr = t.type==='meeting'?'var(--meeting)':t.type==='reminder'?'var(--reminder)':'var(--task)';
+  const urgentBadge = t.priority==='urgent' ? `<span class="badge badge-urgent">🔴 عاجل</span>` : '';
+  const visitorBadge = t.requested_by_name ? `<span class="badge badge-visitor">👤 ${t.requested_by_name}</span>` : '';
+  const cd = countdown(t);
+
+  return `
+    <div class="card" onclick="openEdit(${t.id})">
+      <div class="card-accent-line" style="background:${t.priority==='urgent'?'var(--urgent)':accentClr}"></div>
+      <div class="card-top">
+        <div class="card-icon">${typeIcon}</div>
+        <div class="card-title ${t.done?'done-title':''}">${t.title}</div>
+      </div>
+      <div class="card-meta">
+        <span class="badge ${typeBadge}">${typeLabel}</span>
+        ${urgentBadge}
+        ${visitorBadge}
+        ${t.time ? `<span class="card-time">${fmt12(t.time)}</span>` : ''}
+        ${cd}
+        ${t.date ? `<span class="card-date">${t.date}</span>` : ''}
+      </div>
+      ${t.note ? `<div class="card-note">📝 ${t.note}</div>` : ''}
+      <div class="card-actions">
+        ${!t.done ? `<button class="btn-sm done" onclick="event.stopPropagation();doneTask(${t.id})">✓ إنجاز</button>` : `<button class="btn-sm" onclick="event.stopPropagation();undoTask(${t.id})">↩ رجوع</button>`}
+        <button class="btn-sm send" onclick="event.stopPropagation();sendReminder(${t.id})">🔔</button>
+        <button class="btn-sm del"  onclick="event.stopPropagation();delTask(${t.id})">🗑</button>
+      </div>
+    </div>`;
+}
+
+function renderRequests(reqs) {
+  if (!reqs.length) return `<div class="empty-col"><div class="ei">📭</div><p>لا توجد طلبات</p></div>`;
+  return reqs.map(r => `
+    <div class="request-card">
+      <div class="req-name">👤 ${r.name||r.requested_by_name}</div>
+      <div class="req-detail">
+        ${r.title||r.task_title||''}
+        ${r.proposed_date||r.date ? `<br>📅 ${r.proposed_date||r.date} ${r.proposed_time||r.time ? '⏰ '+fmt12(r.proposed_time||r.time) : ''}` : ''}
+      </div>
+      <div class="req-actions">
+        <button class="btn-approve" onclick="approveReq(${r.id},'${r.name||r.requested_by_name}')">✅ قبول</button>
+        <button class="btn-reject"  onclick="rejectReq(${r.id},'${r.name||r.requested_by_name}')">❌ رفض</button>
+      </div>
+    </div>`).join('');
+}
+
+// ── Search ──────────────────────────────────────────────────────────────────
+function filterCards() { renderBoard(); }
+
+// ── Countdown Update ─────────────────────────────────────────────────────────
+function updateCountdowns() { renderBoard(); }
+
+// ── CRUD ─────────────────────────────────────────────────────────────────────
+async function doneTask(id) {
+  await fetch(API+'/tasks/'+id, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({done:true}) });
+  toast('✅ تم الإنجاز!','ok'); refreshAll();
+}
 async function undoTask(id) {
-  try {
-    await fetch(API + '/tasks/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({done:false}) });
-    showToast('↩ تم إلغاء الإنجاز', 'success');
-    loadTasks();
-  } catch(e) { showToast('خطأ!', 'error'); }
+  await fetch(API+'/tasks/'+id, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({done:false}) });
+  toast('↩ تم الإرجاع','ok'); refreshAll();
 }
-
-async function deleteTask(id) {
-  if (!confirm('تأكيد حذف المهمة؟')) return;
-  try {
-    await fetch(API + '/tasks/' + id, { method: 'DELETE' });
-    showToast('🗑 تم الحذف', 'success');
-    loadTasks();
-  } catch(e) { showToast('خطأ!', 'error'); }
+async function delTask(id) {
+  if (!confirm('تأكيد الحذف؟')) return;
+  await fetch(API+'/tasks/'+id, { method:'DELETE' });
+  toast('🗑 تم الحذف','err'); refreshAll();
 }
-
 async function sendReminder(id) {
-  try {
-    await fetch(API + '/tasks/' + id + '/send', { method: 'POST' });
-    showToast('🔔 تم إرسال التذكير على واتساب!', 'success');
-  } catch(e) { showToast('خطأ!', 'error'); }
+  await fetch(API+'/tasks/'+id+'/send', { method:'POST' });
+  toast('🔔 تم الإرسال!','ok');
+}
+async function approveReq(id, name) {
+  await fetch(API+'/tasks/'+id, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:'approved'}) });
+  toast('✅ تم قبول طلب '+name,'ok'); refreshAll();
+}
+async function rejectReq(id, name) {
+  await fetch(API+'/tasks/'+id, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({status:'rejected'}) });
+  toast('❌ تم رفض طلب '+name,'err'); refreshAll();
 }
 
-// ─── Modal ────────────────────────────────────────────────────────────────
-function openAddModal() {
+// ── Modal ────────────────────────────────────────────────────────────────────
+function openModal() {
   editingId = null;
-  document.getElementById('modal-title').textContent = 'مهمة جديدة';
+  document.getElementById('modal-title-text').textContent = '➕ مهمة جديدة';
   document.getElementById('f-title').value = '';
   document.getElementById('f-type').value = 'task';
   document.getElementById('f-priority').value = 'normal';
-  document.getElementById('f-date').value = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Riyadh'});
-  document.getElementById('f-hour').value = '09';
-  document.getElementById('f-min').value = '00';
-  document.getElementById('f-ampm').value = 'am';
+  document.getElementById('f-date').value = new Date().toLocaleDateString('en-CA');
+  document.getElementById('f-time').value = '';
   document.getElementById('f-note').value = '';
-  document.getElementById('f-location').value = '';
-  document.getElementById('f-location-group').style.display = 'none';
-  document.getElementById('task-modal').classList.add('open');
+  document.getElementById('modal').classList.add('open');
 }
 
-function openEditModal(id) {
+function openEdit(id) {
   const t = allTasks.find(t => t.id == id);
   if (!t) return;
   editingId = id;
-  document.getElementById('modal-title').textContent = 'تعديل المهمة';
-  document.getElementById('f-title').value = t.title;
-  document.getElementById('f-type').value = t.type;
-  document.getElementById('f-priority').value = t.priority || 'normal';
-  document.getElementById('f-date').value = t.date;
-  // تحويل 24h → 12h
-  if (t.time) {
-    let [hh, mm] = t.time.split(':').map(Number);
-    const ap = hh < 12 ? 'am' : 'pm';
-    if (hh === 0) hh = 12;
-    else if (hh > 12) hh -= 12;
-    document.getElementById('f-hour').value = String(hh).padStart(2,'0');
-    document.getElementById('f-min').value = String(mm).padStart(2,'0') === '00' ? '00' : String(mm).padStart(2,'0');
-    document.getElementById('f-ampm').value = ap;
-  }
-  document.getElementById('f-note').value = t.note || '';
-  document.getElementById('f-location').value = t.location || '';
-  document.getElementById('f-location-group').style.display = t.type === 'meeting' ? 'block' : 'none';
-  document.getElementById('task-modal').classList.add('open');
+  document.getElementById('modal-title-text').textContent = '✏️ تعديل المهمة';
+  document.getElementById('f-title').value    = t.title;
+  document.getElementById('f-type').value     = t.type;
+  document.getElementById('f-priority').value = t.priority||'normal';
+  document.getElementById('f-date').value     = t.date||'';
+  document.getElementById('f-time').value     = t.time||'';
+  document.getElementById('f-note').value     = t.note||'';
+  document.getElementById('modal').classList.add('open');
 }
 
-function closeModal() {
-  document.getElementById('task-modal').classList.remove('open');
-}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+function closeModalBg(e) { if (e.target===e.currentTarget) closeModal(); }
 
 async function saveTask() {
   const title = document.getElementById('f-title').value.trim();
-  const date = document.getElementById('f-date').value;
-  const hour = document.getElementById('f-hour').value;
-  const min = document.getElementById('f-min').value;
-  const ampm = document.getElementById('f-ampm').value;
-  if (!title || !date) { showToast('يرجى تعبئة جميع الحقول', 'error'); return; }
-
-  // تحويل 12h → 24h بشكل صحيح
-  let h = parseInt(hour);
-  if (ampm === 'am') {
-    if (h === 12) h = 0; // 12 ص = منتصف الليل
-  } else {
-    if (h !== 12) h += 12; // 1م-11م
-  }
-  const time = String(h).padStart(2,'0') + ':' + min;
-
+  const date  = document.getElementById('f-date').value;
+  const time  = document.getElementById('f-time').value;
+  if (!title || !date) { toast('⚠️ أدخل العنوان والتاريخ','err'); return; }
   const body = {
     title,
-    type: document.getElementById('f-type').value,
+    type:     document.getElementById('f-type').value,
     priority: document.getElementById('f-priority').value,
     date, time,
-    note: document.getElementById('f-note').value,
-    location: document.getElementById('f-location').value,
+    note:     document.getElementById('f-note').value,
   };
-
-  try {
-    if (editingId) {
-      await fetch(API + '/tasks/' + editingId, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      showToast('✅ تم التعديل!', 'success');
-    } else {
-      await fetch(API + '/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      showToast('✅ تمت الإضافة!', 'success');
-    }
-    closeModal();
-    loadTasks();
-  } catch(e) { showToast('خطأ في الحفظ', 'error'); }
+  if (editingId) {
+    await fetch(API+'/tasks/'+editingId, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    toast('✅ تم التعديل!','ok');
+  } else {
+    await fetch(API+'/tasks', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    toast('✅ تمت الإضافة!','ok');
+  }
+  closeModal(); refreshAll();
 }
 
-// ─── Settings ─────────────────────────────────────────────────────────────
-async function saveSettings() {
-  const activeDays = [...document.querySelectorAll('.day-btn.active')].map(b => b.dataset.day).join(',');
-  const body = {
-    start_time: document.getElementById('setting-start').value,
-    end_time: document.getElementById('setting-end').value,
-    gap_minutes: parseInt(document.getElementById('setting-gap').value),
-    working_days: activeDays,
-  };
-  try {
-    await fetch(API + '/working-hours', { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    showToast('✅ تم حفظ الإعدادات!', 'success');
-  } catch(e) { showToast('خطأ في الحفظ', 'error'); }
+// ── Toast ────────────────────────────────────────────────────────────────────
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast '+type+' show';
+  setTimeout(() => el.classList.remove('show'), 3000);
 }
-
-// ─── Toast ────────────────────────────────────────────────────────────────
-function showToast(msg, type = 'success') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = `toast ${type} show`;
-  setTimeout(() => t.classList.remove('show'), 3000);
-}
-
-// Close modal on overlay click
-document.getElementById('task-modal').addEventListener('click', e => {
-  if (e.target === e.currentTarget) closeModal();
-});
 </script>
 </body>
 </html>
