@@ -544,7 +544,21 @@ async function parseTask(msg) {
     '- لو في أكثر من مهمة في الرسالة، استخرج الأولى فقط\n\n' +
     'الرسالة: "' + processed + '"';
 
-  return callAIJson('claude-haiku-4-5', 300, prompt);
+  const result = await callAIJson('claude-haiku-4-5', 300, prompt);
+  // لو العنوان هو نفس النوع فقط — استخرجه من الرسالة
+  if (result && result.title) {
+    const typeWords2 = ['تذكير','مهمة','مهمه','اجتماع','task','reminder','meeting'];
+    if (typeWords2.includes(result.title.trim().toLowerCase())) {
+      const cleaned = processed
+        .replace(/^(سجل|اضف|أضف|ذكرني|ذكّرني)\s+/gi, '')
+        .replace(/(تذكير|مهمة|مهمه|اجتماع)\s+(كل\s+\S+\s+)?(الساعه?\s+[\d٠-٩]+\s*(ص|م)?)/gi, '')
+        .replace(/الساعه?\s+[\d٠-٩:]+\s*(ص|م|صباح|مساء)?/gi, '')
+        .replace(/كل\s+(احد|اثنين|ثلاثاء|اربعاء|خميس|جمعه?|سبت)/gi, '')
+        .replace(/\s+/g, ' ').trim();
+      if (cleaned.length > 2) result.title = cleaned;
+    }
+  }
+  return result;
 }
 
 // ─── Analyze Owner ────────────────────────────────────────────────────────
@@ -2189,17 +2203,32 @@ async function handleOwner(from, msg) {
   const hasMulti = multiLines.length >= 3 || multiKeywords.some(function(w){ return msg.includes(w); });
   
   if (hasMulti && multiLines.length >= 2) {
-    // سجّل كل سطر كمهمة منفصلة
     let registered = [];
     for (const line of multiLines) {
       if (line.trim().length < 4) continue;
       const p = await parseTask(line);
-      if (p && p.title && p.date && p.time) {
+      if (p && p.date && p.time) {
+        // استخرج العنوان الحقيقي — امسح كلمات الوقت والأيام
+        let realTitle = p.title || line;
+        // لو العنوان هو نفس النوع (تذكير/مهمة/اجتماع) استخرج من السطر
+        const typeWords = ['تذكير','مهمة','مهمه','اجتماع','reminder','task','meeting'];
+        if (typeWords.includes((realTitle||'').trim().toLowerCase())) {
+          // استخرج العنوان من السطر مباشرة — احذف كلمات التوقيت
+          realTitle = line
+            .replace(/سجل\s+عندك\s+/gi, '')
+            .replace(/تذكير\s+كل\s+/gi, '')
+            .replace(/كل\s+(احد|اثنين|ثلاثاء|اربعاء|خميس|جمعه|جمعة|سبت|يوم)/gi, '')
+            .replace(/الساعه?\s+[\d٠-٩]+\s*(ص|م|صباح|مساء|عصر|ليل)?/gi, '')
+            .replace(/الساعة\s+[\d]+\s*(ص|م)?/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        }
+        if (!realTitle || realTitle.length < 2) continue;
         const id = Date.now() + Math.floor(Math.random()*1000);
         const type2 = p.type || 'task';
         await pool.query('INSERT INTO tasks (id,title,type,date,time,note,location) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-          [id, p.title, type2, p.date, p.time, '', '']);
-        registered.push('📌 *' + p.title + '* — ' + fmt12(p.time) + ' ' + p.date);
+          [id, realTitle, type2, p.date, p.time, '', '']);
+        registered.push((type2==='meeting'?'📅':type2==='reminder'?'🔔':'📌') + ' *' + realTitle + '* — ' + fmt12(p.time) + ' ' + p.date);
       }
     }
     if (registered.length >= 2) {
