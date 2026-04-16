@@ -1757,6 +1757,10 @@ cron.schedule('0 19 * * 4', async function() {
       pool.query('SELECT COUNT(*) FROM visitors WHERE created_at>=$1',[wa]),
     ]);
 
+    // أضف مهام اليوم في الاستعلام
+    const todayTasks = pendingAll.rows.filter(function(t){ return t.date === today; });
+    const upcomingTasks = pendingAll.rows.filter(function(t){ return !t.date || t.date > today; });
+
     const total = doneW.rows.length + pendingAll.rows.length + overdueAll.rows.length;
     const pct = total > 0 ? Math.round(doneW.rows.length / total * 100) : 0;
 
@@ -1777,10 +1781,16 @@ cron.schedule('0 19 * * 4', async function() {
       msg += '\n';
     }
 
-    if (pendingAll.rows.length) {
-      msg += '🗓️ *معلقة (' + pendingAll.rows.length + '):*\n';
-      pendingAll.rows.slice(0,5).forEach(function(t){ msg += '  🔹 ' + t.title + (t.date?' — '+t.date:'') + '\n'; });
-      if (pendingAll.rows.length > 5) msg += '  و' + (pendingAll.rows.length-5) + ' أخرى...\n';
+    if (todayTasks.length) {
+      msg += '📌 *اليوم (' + todayTasks.length + '):*\n';
+      todayTasks.forEach(function(t){ msg += '  ' + (t.type==='meeting'?'📅':'🔹') + ' ' + t.title + (t.time?' — '+fmt12(t.time):'') + '\n'; });
+      msg += '\n';
+    }
+
+    if (upcomingTasks.length) {
+      msg += '🗓️ *معلقة (' + upcomingTasks.length + '):*\n';
+      upcomingTasks.slice(0,5).forEach(function(t){ msg += '  🔹 ' + t.title + (t.date?' — '+t.date:'') + '\n'; });
+      if (upcomingTasks.length > 5) msg += '  و' + (upcomingTasks.length-5) + ' أخرى...\n';
       msg += '\n';
     }
 
