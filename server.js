@@ -191,6 +191,36 @@ async function initDB() {
     "remind_days INTEGER DEFAULT 1, " +
     "created_at TIMESTAMP DEFAULT NOW())"
   );
+  // ── Kanban Board ──────────────────────────────────────────────────────────
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS kanban_columns (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "title TEXT NOT NULL, " +
+    "position INTEGER DEFAULT 0, " +
+    "color TEXT DEFAULT '#6c63ff', " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS kanban_cards (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "column_id BIGINT REFERENCES kanban_columns(id) ON DELETE CASCADE, " +
+    "title TEXT NOT NULL, " +
+    "description TEXT DEFAULT '', " +
+    "due_date TEXT, " +
+    "due_time TEXT, " +
+    "color TEXT DEFAULT '', " +
+    "position INTEGER DEFAULT 0, " +
+    "reminded BOOLEAN DEFAULT FALSE, " +
+    "created_at TIMESTAMP DEFAULT NOW())"
+  );
+  await pool.query(
+    "CREATE TABLE IF NOT EXISTS kanban_checklist (" +
+    "id BIGSERIAL PRIMARY KEY, " +
+    "card_id BIGINT REFERENCES kanban_cards(id) ON DELETE CASCADE, " +
+    "title TEXT NOT NULL, " +
+    "done BOOLEAN DEFAULT FALSE, " +
+    "position INTEGER DEFAULT 0)"
+  );
   console.log('✅ DB جاهزة');
 }
 initDB();
@@ -1445,6 +1475,32 @@ cron.schedule('*/5 * * * *', async function() {
       }
     }
   } catch(e) { console.error('Confirm cron:', e.message); }
+}, { timezone: 'Asia/Riyadh' });
+
+// ─── Cron: تذكيرات Kanban كل دقيقة ──────────────────────────────────────────
+cron.schedule('* * * * *', async function() {
+  try {
+    const now2 = new Date();
+    const today2 = now2.getFullYear()+'-'+String(now2.getMonth()+1).padStart(2,'0')+'-'+String(now2.getDate()).padStart(2,'0');
+    const curTime = String(now2.getHours()).padStart(2,'0')+':'+String(now2.getMinutes()).padStart(2,'0');
+    const cards = await pool.query(
+      'SELECT kc.*,kcol.title AS col_title FROM kanban_cards kc JOIN kanban_columns kcol ON kc.column_id=kcol.id WHERE kc.due_date=$1 AND kc.due_time=$2 AND kc.reminded=false',
+      [today2, curTime]
+    );
+    for (const card of cards.rows) {
+      // جيب المهام الفرعية
+      const checks = await pool.query('SELECT * FROM kanban_checklist WHERE card_id=$1 ORDER BY position',[card.id]);
+      let msg11 = '📋 *تذكير: ' + card.col_title + '*\n\n';
+      msg11 += '📌 *' + card.title + '*\n';
+      if (card.description) msg11 += '📝 ' + card.description + '\n';
+      if (checks.rows.length) {
+        msg11 += '\n✅ *المهام:*\n';
+        checks.rows.forEach(function(ch){ msg11 += (ch.done?'☑':'☐') + ' ' + ch.title + '\n'; });
+      }
+      await sendWA(PHONE, msg11);
+      await pool.query('UPDATE kanban_cards SET reminded=true WHERE id=$1',[card.id]);
+    }
+  } catch(e) {}
 }, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: تذكيرات كل 10 ثواني ───────────────────────────────────────────
@@ -4870,6 +4926,104 @@ app.get('/search', async function(req,res) {
     res.json(r.rows);
   } catch(e) { res.json([]); }
 });
+
+// ── Kanban API ────────────────────────────────────────────────────────────────
+app.get('/kanban/columns', async function(req,res) {
+  try {
+    const cols = await pool.query('SELECT * FROM kanban_columns ORDER BY position,id');
+    const cards = await pool.query('SELECT * FROM kanban_cards ORDER BY position,id');
+    const checks = await pool.query('SELECT * FROM kanban_checklist ORDER BY position,id');
+    const result = cols.rows.map(function(col) {
+      const colCards = cards.rows.filter(function(c){ return c.column_id == col.id; });
+      return Object.assign({}, col, {
+        cards: colCards.map(function(card) {
+          return Object.assign({}, card, {
+            checklist: checks.rows.filter(function(ch){ return ch.card_id == card.id; })
+          });
+        })
+      });
+    });
+    res.json(result);
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.post('/kanban/columns', async function(req,res) {
+  try {
+    const { title, color } = req.body;
+    const pos = await pool.query('SELECT COALESCE(MAX(position),0)+1 AS p FROM kanban_columns');
+    const r = await pool.query('INSERT INTO kanban_columns (title,color,position) VALUES ($1,$2,$3) RETURNING *',[title,color||'#6c63ff',pos.rows[0].p]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.patch('/kanban/columns/:id', async function(req,res) {
+  try {
+    const { title, color, position } = req.body;
+    const f=[],v=[]; let i=1;
+    if(title!==undefined){f.push('title=$'+i++);v.push(title);}
+    if(color!==undefined){f.push('color=$'+i++);v.push(color);}
+    if(position!==undefined){f.push('position=$'+i++);v.push(position);}
+    if(f.length){v.push(req.params.id);await pool.query('UPDATE kanban_columns SET '+f.join(',')+" WHERE id=$"+i,v);}
+    res.json({ok:true});
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.delete('/kanban/columns/:id', async function(req,res) {
+  try { await pool.query('DELETE FROM kanban_columns WHERE id=$1',[req.params.id]); res.json({ok:true}); } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.post('/kanban/cards', async function(req,res) {
+  try {
+    const { column_id, title, description, due_date, due_time, color } = req.body;
+    const pos = await pool.query('SELECT COALESCE(MAX(position),0)+1 AS p FROM kanban_cards WHERE column_id=$1',[column_id]);
+    const r = await pool.query('INSERT INTO kanban_cards (column_id,title,description,due_date,due_time,color,position) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
+      [column_id,title,description||'',due_date||null,due_time||null,color||'',pos.rows[0].p]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.patch('/kanban/cards/:id', async function(req,res) {
+  try {
+    const b = req.body;
+    const f=[],v=[]; let i=1;
+    ['title','description','due_date','due_time','color','position','reminded'].forEach(function(k){
+      if(b[k]!==undefined){f.push(k+'=$'+i++);v.push(b[k]);}
+    });
+    if(b.column_id!==undefined){f.push('column_id=$'+i++);v.push(b.column_id);}
+    if(f.length){v.push(req.params.id);await pool.query('UPDATE kanban_cards SET '+f.join(',')+" WHERE id=$"+i,v);}
+    res.json({ok:true});
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.delete('/kanban/cards/:id', async function(req,res) {
+  try { await pool.query('DELETE FROM kanban_cards WHERE id=$1',[req.params.id]); res.json({ok:true}); } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.post('/kanban/checklist', async function(req,res) {
+  try {
+    const { card_id, title } = req.body;
+    const pos = await pool.query('SELECT COALESCE(MAX(position),0)+1 AS p FROM kanban_checklist WHERE card_id=$1',[card_id]);
+    const r = await pool.query('INSERT INTO kanban_checklist (card_id,title,position) VALUES ($1,$2,$3) RETURNING *',[card_id,title,pos.rows[0].p]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.patch('/kanban/checklist/:id', async function(req,res) {
+  try {
+    const { done, title } = req.body;
+    const f=[],v=[]; let i=1;
+    if(done!==undefined){f.push('done=$'+i++);v.push(done);}
+    if(title!==undefined){f.push('title=$'+i++);v.push(title);}
+    if(f.length){v.push(req.params.id);await pool.query('UPDATE kanban_checklist SET '+f.join(',')+" WHERE id=$"+i,v);}
+    res.json({ok:true});
+  } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.delete('/kanban/checklist/:id', async function(req,res) {
+  try { await pool.query('DELETE FROM kanban_checklist WHERE id=$1',[req.params.id]); res.json({ok:true}); } catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.get('/kanban', function(req,res) { res.sendFile(require('path').join(__dirname,'kanban.html')); });
 
 app.get('/', function(req,res) {
   res.json({ status:'مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
