@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مهامي — Kanban</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+
+:root {
+  --bg: #1d2b3a;
+  --col: #ebecf0;
+  --col-dark: #dfe1e6;
+  --card-bg: #fff;
+  --text: #172b4d;
+  --text2: #5e6c84;
+  --text3: #97a0af;
+  --accent: #0052cc;
+  --green: #36b37e;
+  --red: #de350b;
+  --yellow: #ff991f;
+  --border: rgba(0,0,0,.1);
+  --shadow: 0 1px 4px rgba(9,30,66,.25);
+}
+
+body {
+  font-family:'Tajawal',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  overflow-x:auto;
+  user-select:none;
+}
+
+/* Header */
+.header {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:10px 16px;
+  background:rgba(0,0,0,.2);
+  backdrop-filter:blur(8px);
+  border-bottom:1px solid rgba(255,255,255,.1);
+  position:sticky;
+  top:0;
+  z-index:100;
+  flex-wrap:wrap;
+}
+.logo { font-size:18px; font-weight:800; color:#fff; }
+.board-title { font-size:15px; font-weight:700; color:#fff; opacity:.9; }
+.header-sep { color:rgba(255,255,255,.3); font-size:18px; }
+.btn-header {
+  background:rgba(255,255,255,.2);
+  border:none;
+  border-radius:6px;
+  padding:6px 12px;
+  color:#fff;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  transition:background .15s;
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+.btn-header:hover { background:rgba(255,255,255,.3); }
+.btn-header.primary { background:var(--accent); }
+.btn-header.primary:hover { background:#0065ff; }
+
+/* Board */
+.board {
+  display:flex;
+  gap:12px;
+  padding:16px;
+  align-items:flex-start;
+  min-height:calc(100vh - 52px);
+}
+
+/* Column */
+.col-wrap {
+  width:272px;
+  flex-shrink:0;
+  display:flex;
+  flex-direction:column;
+  max-height:calc(100vh - 84px);
+}
+
+.col {
+  background:var(--col);
+  border-radius:12px;
+  display:flex;
+  flex-direction:column;
+  max-height:calc(100vh - 84px);
+}
+
+.col-header {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:10px 12px 8px;
+  cursor:grab;
+  position:relative;
+}
+.col-header:active { cursor:grabbing; }
+
+.col-color-bar {
+  position:absolute;
+  top:0; right:0; left:0;
+  height:4px;
+  border-radius:12px 12px 0 0;
+}
+
+.col-title-input {
+  flex:1;
+  background:transparent;
+  border:none;
+  outline:none;
+  font-family:'Tajawal',sans-serif;
+  font-size:14px;
+  font-weight:700;
+  color:var(--text);
+  cursor:pointer;
+  padding:2px 4px;
+  border-radius:4px;
+  min-width:0;
+  direction:rtl;
+}
+.col-title-input:focus {
+  background:rgba(0,0,0,.06);
+  cursor:text;
+}
+
+.col-count {
+  background:rgba(0,0,0,.1);
+  border-radius:12px;
+  padding:1px 7px;
+  font-size:12px;
+  font-weight:700;
+  color:var(--text2);
+  flex-shrink:0;
+}
+
+.col-menu-btn {
+  background:none;
+  border:none;
+  color:var(--text2);
+  cursor:pointer;
+  font-size:16px;
+  padding:2px 4px;
+  border-radius:4px;
+  flex-shrink:0;
+}
+.col-menu-btn:hover { background:rgba(0,0,0,.08); }
+
+.col-body {
+  padding:0 8px;
+  overflow-y:auto;
+  flex:1;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(0,0,0,.15) transparent;
+}
+
+/* Card */
+.card {
+  background:var(--card-bg);
+  border-radius:8px;
+  padding:10px 12px;
+  margin-bottom:8px;
+  box-shadow:var(--shadow);
+  cursor:pointer;
+  transition:transform .15s, box-shadow .15s;
+  position:relative;
+  overflow:hidden;
+  animation:cardIn .2s ease;
+}
+@keyframes cardIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+.card:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(9,30,66,.3); }
+.card.dragging { opacity:.4; transform:rotate(2deg); }
+
+.card-color-strip {
+  position:absolute;
+  right:0; top:0; bottom:0;
+  width:4px;
+}
+
+.card-labels { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px; }
+.label {
+  height:8px;
+  border-radius:4px;
+  min-width:40px;
+  cursor:pointer;
+}
+
+.card-title { font-size:13px; font-weight:600; color:var(--text); line-height:1.4; margin-bottom:6px; }
+
+.card-footer { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+
+.card-due {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  font-size:11px;
+  font-weight:700;
+  padding:2px 7px;
+  border-radius:12px;
+  background:rgba(0,0,0,.07);
+  color:var(--text2);
+}
+.card-due.overdue   { background:#ffebe6; color:var(--red); }
+.card-due.due-soon  { background:#fff7e6; color:var(--yellow); }
+.card-due.due-today { background:#e3f2fd; color:#0052cc; }
+
+.card-checklist-prog {
+  font-size:11px;
+  color:var(--text2);
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+.prog-bar {
+  width:40px;
+  height:4px;
+  background:rgba(0,0,0,.1);
+  border-radius:2px;
+  overflow:hidden;
+}
+.prog-fill {
+  height:100%;
+  background:var(--green);
+  border-radius:2px;
+  transition:width .3s;
+}
+
+/* Add card btn */
+.add-card-btn {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:8px 10px;
+  border-radius:8px;
+  color:var(--text2);
+  font-size:13px;
+  font-weight:500;
+  cursor:pointer;
+  transition:all .15s;
+  border:none;
+  background:none;
+  font-family:'Tajawal',sans-serif;
+  width:100%;
+  margin:4px 0 8px;
+  text-align:right;
+}
+.add-card-btn:hover { color:var(--text); background:rgba(0,0,0,.06); }
+
+/* Add column */
+.add-col-btn {
+  width:272px;
+  flex-shrink:0;
+  background:rgba(255,255,255,.2);
+  border:none;
+  border-radius:12px;
+  padding:12px 16px;
+  color:#fff;
+  font-family:'Tajawal',sans-serif;
+  font-size:14px;
+  font-weight:600;
+  cursor:pointer;
+  transition:background .15s;
+  text-align:right;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.add-col-btn:hover { background:rgba(255,255,255,.3); }
+
+/* Quick add form */
+.quick-add {
+  background:var(--card-bg);
+  border-radius:8px;
+  padding:10px;
+  margin-bottom:8px;
+  box-shadow:var(--shadow);
+}
+.quick-textarea {
+  width:100%;
+  background:rgba(0,0,0,.04);
+  border:2px solid var(--accent);
+  border-radius:6px;
+  padding:8px;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  color:var(--text);
+  outline:none;
+  resize:none;
+  min-height:60px;
+  direction:rtl;
+}
+.quick-actions { display:flex; gap:6px; margin-top:8px; align-items:center; }
+.btn-add-card {
+  background:var(--accent);
+  border:none;
+  border-radius:6px;
+  padding:7px 14px;
+  color:#fff;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+}
+.btn-cancel-add {
+  background:none;
+  border:none;
+  font-size:18px;
+  cursor:pointer;
+  color:var(--text2);
+  padding:4px 8px;
+  border-radius:4px;
+}
+.btn-cancel-add:hover { background:rgba(0,0,0,.06); }
+
+/* === MODAL === */
+.overlay {
+  position:fixed;inset:0;
+  background:rgba(0,0,0,.6);
+  z-index:500;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding:48px 16px;
+  overflow-y:auto;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .2s;
+}
+.overlay.open { opacity:1; pointer-events:all; }
+
+.modal {
+  background:#f4f5f7;
+  border-radius:12px;
+  width:760px;
+  max-width:100%;
+  padding:0;
+  overflow:hidden;
+  box-shadow:0 8px 40px rgba(0,0,0,.4);
+  transform:scale(.97);
+  transition:transform .2s;
+}
+.overlay.open .modal { transform:scale(1); }
+
+.modal-header {
+  background:var(--card-bg);
+  padding:20px 20px 16px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  position:relative;
+}
+.modal-card-icon { font-size:20px; margin-top:2px; flex-shrink:0; }
+.modal-title-input {
+  flex:1;
+  font-family:'Tajawal',sans-serif;
+  font-size:18px;
+  font-weight:700;
+  color:var(--text);
+  background:none;
+  border:none;
+  outline:none;
+  direction:rtl;
+  resize:none;
+  min-height:28px;
+  line-height:1.4;
+}
+.modal-title-input:focus { background:rgba(0,0,0,.04); border-radius:4px; padding:2px 6px; }
+.modal-close {
+  background:none;
+  border:none;
+  font-size:20px;
+  cursor:pointer;
+  color:var(--text2);
+  padding:4px;
+  border-radius:4px;
+  flex-shrink:0;
+}
+.modal-close:hover { background:rgba(0,0,0,.08); }
+
+.modal-body { display:grid; grid-template-columns:1fr 200px; gap:0; min-height:400px; }
+
+.modal-main { padding:20px; }
+.modal-sidebar { background:rgba(0,0,0,.04); padding:16px; border-right:1px solid var(--border); }
+
+.modal-section { margin-bottom:20px; }
+.modal-section-title {
+  font-size:11px;
+  font-weight:700;
+  color:var(--text2);
+  text-transform:uppercase;
+  letter-spacing:.5px;
+  margin-bottom:8px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+
+.desc-textarea {
+  width:100%;
+  background:rgba(0,0,0,.05);
+  border:none;
+  border-radius:6px;
+  padding:10px;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  color:var(--text);
+  outline:none;
+  resize:none;
+  min-height:80px;
+  direction:rtl;
+  transition:background .15s;
+}
+.desc-textarea:focus { background:rgba(0,0,0,.08); }
+
+/* Checklist */
+.checklist-item {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:4px 0;
+}
+.check-box {
+  width:16px; height:16px;
+  border:2px solid var(--text2);
+  border-radius:3px;
+  cursor:pointer;
+  flex-shrink:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition:all .15s;
+}
+.check-box.checked { background:var(--green); border-color:var(--green); color:#fff; font-size:11px; }
+.check-title {
+  flex:1;
+  font-size:13px;
+  color:var(--text);
+  background:none;
+  border:none;
+  outline:none;
+  font-family:'Tajawal',sans-serif;
+  direction:rtl;
+  cursor:text;
+}
+.check-title.done { text-decoration:line-through; color:var(--text3); }
+.check-del {
+  background:none;
+  border:none;
+  color:var(--text3);
+  cursor:pointer;
+  font-size:14px;
+  padding:2px;
+  opacity:0;
+  transition:opacity .15s;
+}
+.checklist-item:hover .check-del { opacity:1; }
+
+.progress-wrap { margin-bottom:12px; }
+.progress-label { font-size:11px; color:var(--text2); margin-bottom:4px; text-align:left; direction:ltr; }
+.progress-track { height:6px; background:rgba(0,0,0,.1); border-radius:3px; overflow:hidden; }
+.progress-fill { height:100%; background:var(--green); border-radius:3px; transition:width .3s; }
+
+.add-item-wrap { display:flex; gap:6px; margin-top:8px; }
+.add-item-input {
+  flex:1;
+  background:rgba(0,0,0,.06);
+  border:1px solid transparent;
+  border-radius:6px;
+  padding:7px 10px;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  color:var(--text);
+  outline:none;
+  direction:rtl;
+}
+.add-item-input:focus { background:rgba(0,0,0,.08); border-color:var(--accent); }
+.btn-add-item {
+  background:var(--accent);
+  border:none;
+  border-radius:6px;
+  padding:7px 12px;
+  color:#fff;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+  white-space:nowrap;
+}
+
+/* Sidebar buttons */
+.sidebar-btn {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  width:100%;
+  background:rgba(0,0,0,.08);
+  border:none;
+  border-radius:6px;
+  padding:8px 10px;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  font-weight:600;
+  color:var(--text);
+  cursor:pointer;
+  margin-bottom:6px;
+  text-align:right;
+  transition:background .15s;
+  direction:rtl;
+}
+.sidebar-btn:hover { background:rgba(0,0,0,.14); }
+.sidebar-btn.danger { color:var(--red); }
+.sidebar-btn.danger:hover { background:rgba(222,53,11,.1); }
+
+.date-input, .time-input, .color-input {
+  width:100%;
+  background:rgba(0,0,0,.06);
+  border:1px solid transparent;
+  border-radius:6px;
+  padding:7px 10px;
+  font-family:'Tajawal',sans-serif;
+  font-size:13px;
+  color:var(--text);
+  outline:none;
+  margin-bottom:8px;
+  direction:ltr;
+}
+.date-input:focus, .time-input:focus { border-color:var(--accent); }
+
+.color-swatches { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+.swatch {
+  width:28px; height:28px;
+  border-radius:6px;
+  cursor:pointer;
+  border:3px solid transparent;
+  transition:transform .15s;
+}
+.swatch:hover { transform:scale(1.15); }
+.swatch.selected { border-color:#fff; box-shadow:0 0 0 2px #000; }
+
+/* Add col modal */
+.add-col-form { padding:16px; }
+.add-col-input {
+  width:100%;
+  background:rgba(255,255,255,.2);
+  border:2px solid rgba(255,255,255,.4);
+  border-radius:6px;
+  padding:8px 12px;
+  color:#fff;
+  font-family:'Tajawal',sans-serif;
+  font-size:14px;
+  outline:none;
+  margin-bottom:8px;
+  direction:rtl;
+}
+.add-col-input::placeholder { color:rgba(255,255,255,.6); }
+.add-col-input:focus { border-color:rgba(255,255,255,.7); }
+
+/* Drag over */
+.col-body.drag-over { background:rgba(0,82,204,.08); border-radius:8px; }
+
+/* Toast */
+.toast {
+  position:fixed;
+  bottom:20px;
+  left:50%;
+  transform:translateX(-50%) translateY(100px);
+  background:var(--text);
+  color:#fff;
+  border-radius:8px;
+  padding:10px 18px;
+  font-size:13px;
+  font-weight:600;
+  z-index:1000;
+  transition:transform .3s;
+  white-space:nowrap;
+}
+.toast.show { transform:translateX(-50%) translateY(0); }
+.toast.ok  { background:#36b37e; }
+.toast.err { background:var(--red); }
+
+/* Context menu */
+.ctx-menu {
+  position:fixed;
+  background:var(--card-bg);
+  border-radius:8px;
+  padding:4px 0;
+  box-shadow:0 8px 24px rgba(0,0,0,.2);
+  z-index:600;
+  min-width:160px;
+  display:none;
+}
+.ctx-menu.show { display:block; }
+.ctx-item {
+  padding:8px 16px;
+  font-size:13px;
+  font-weight:500;
+  color:var(--text);
+  cursor:pointer;
+  direction:rtl;
+  transition:background .1s;
+}
+.ctx-item:hover { background:rgba(0,0,0,.06); }
+.ctx-item.danger { color:var(--red); }
+
+/* Colors */
+.card-red    { border-right:4px solid #de350b; }
+.card-yellow { border-right:4px solid #ff991f; }
+.card-green  { border-right:4px solid #36b37e; }
+.card-blue   { border-right:4px solid #0052cc; }
+.card-purple { border-right:4px solid #6554c0; }
+.card-pink   { border-right:4px solid #e91e8c; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="logo">📋</div>
+  <div class="board-title">مهامي</div>
+  <div class="header-sep">|</div>
+  <button class="btn-header" onclick="openAddCol()">+ إضافة عمود</button>
+  <button class="btn-header" onclick="location.href='/dashboard'" style="margin-right:auto">📊 الداشبورد</button>
+</div>
+
+<!-- Board -->
+<div class="board" id="board"></div>
+
+<!-- Add Column Form (inline) -->
+<div id="addColForm" style="display:none; position:fixed; top:60px; right:20px; z-index:200; width:280px;">
+  <div style="background:#253858;border-radius:12px;padding:14px;">
+    <input class="add-col-input" id="newColTitle" placeholder="اسم العمود..." onkeydown="if(event.key==='Enter')confirmAddCol()">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="swatch selected" style="background:#0052cc" onclick="selectColColor('#0052cc',this)"></div>
+      <div class="swatch" style="background:#36b37e" onclick="selectColColor('#36b37e',this)"></div>
+      <div class="swatch" style="background:#ff991f" onclick="selectColColor('#ff991f',this)"></div>
+      <div class="swatch" style="background:#de350b" onclick="selectColColor('#de350b',this)"></div>
+      <div class="swatch" style="background:#6554c0" onclick="selectColColor('#6554c0',this)"></div>
+      <div class="swatch" style="background:#e91e8c" onclick="selectColColor('#e91e8c',this)"></div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn-add-card" onclick="confirmAddCol()">إضافة</button>
+      <button class="btn-cancel-add" onclick="closeAddCol()">✕</button>
+    </div>
+  </div>
+</div>
+
+<!-- Card Modal -->
+<div class="overlay" id="cardModal" onclick="closeModalBg(event)">
+  <div class="modal" id="modalContent">
+    <div class="modal-header">
+      <div class="modal-card-icon" id="m-icon">📌</div>
+      <textarea class="modal-title-input" id="m-title" rows="2" placeholder="عنوان الكرت..."></textarea>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-main">
+        <!-- Description -->
+        <div class="modal-section">
+          <div class="modal-section-title">📝 الوصف</div>
+          <textarea class="desc-textarea" id="m-desc" placeholder="أضف وصفاً أو ملاحظات..." rows="3"
+            onblur="saveCardField('description',this.value)"></textarea>
+        </div>
+        <!-- Checklist -->
+        <div class="modal-section" id="checklist-section">
+          <div class="modal-section-title">
+            ☑️ قائمة المهام
+            <span id="checklist-pct" style="color:var(--green);margin-right:auto"></span>
+          </div>
+          <div class="progress-wrap" id="checklist-progress" style="display:none">
+            <div class="progress-track"><div class="progress-fill" id="p-fill" style="width:0%"></div></div>
+          </div>
+          <div id="checklist-items"></div>
+          <div class="add-item-wrap">
+            <input class="add-item-input" id="new-item-input" placeholder="مهمة جديدة..." onkeydown="if(event.key==='Enter')addChecklistItem()">
+            <button class="btn-add-item" onclick="addChecklistItem()">إضافة</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-sidebar">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">⚙️ إجراءات</div>
+
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:600">📅 تاريخ الاستحقاق</div>
+        <input type="date" class="date-input" id="m-date" onchange="saveCardField('due_date',this.value)">
+        <input type="time" class="time-input" id="m-time" onchange="saveCardField('due_time',this.value)">
+
+        <div style="font-size:11px;color:var(--text2);margin-bottom:6px;font-weight:600">🎨 لون الكرت</div>
+        <div class="color-swatches" id="color-swatches">
+          <div class="swatch" style="background:#de350b" data-color="red"    onclick="setCardColor('red',this)"></div>
+          <div class="swatch" style="background:#ff991f" data-color="yellow" onclick="setCardColor('yellow',this)"></div>
+          <div class="swatch" style="background:#36b37e" data-color="green"  onclick="setCardColor('green',this)"></div>
+          <div class="swatch" style="background:#0052cc" data-color="blue"   onclick="setCardColor('blue',this)"></div>
+          <div class="swatch" style="background:#6554c0" data-color="purple" onclick="setCardColor('purple',this)"></div>
+          <div class="swatch" style="background:#e91e8c" data-color="pink"   onclick="setCardColor('pink',this)"></div>
+          <div class="swatch" style="background:#ddd;border:1px solid #ccc" data-color="" onclick="setCardColor('',this)" title="بدون لون"></div>
+        </div>
+
+        <div style="margin-top:8px">
+          <button class="sidebar-btn" onclick="moveCardToCol()">↔️ نقل لعمود آخر</button>
+          <button class="sidebar-btn danger" onclick="deleteCurrentCard()">🗑 حذف الكرت</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Move to Column Modal -->
+<div class="overlay" id="moveModal" onclick="closeMoveModal(event)">
+  <div class="modal" style="max-width:320px;padding:20px">
+    <div style="font-size:16px;font-weight:700;margin-bottom:14px">↔️ نقل لعمود</div>
+    <div id="move-cols"></div>
+    <button onclick="closeMoveModal2()" style="margin-top:8px;background:rgba(0,0,0,.1);border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-family:'Tajawal',sans-serif;font-size:13px;">إلغاء</button>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div class="ctx-menu" id="ctxMenu">
+  <div class="ctx-item" onclick="ctxRename()">✏️ إعادة تسمية</div>
+  <div class="ctx-item" onclick="ctxChangeColor()">🎨 تغيير اللون</div>
+  <div class="ctx-item danger" onclick="ctxDelete()">🗑 حذف العمود</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = window.location.origin;
+let board = [];
+let currentCardId = null;
+let currentColId  = null;
+let dragCard = null;
+let dragCol  = null;
+let newColColor = '#0052cc';
+let ctxColId = null;
+
+// ── Load ─────────────────────────────────────────────────────────────────────
+async function load() {
+  const res = await fetch(API + '/kanban/columns');
+  board = await res.json();
+  render();
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const b = document.getElementById('board');
+  b.innerHTML = board.map(col => colHTML(col)).join('') +
+    `<button class="add-col-btn" onclick="openAddCol()">+ إضافة عمود</button>`;
+  initDrag();
+}
+
+function colHTML(col) {
+  const cards = col.cards || [];
+  return `
+  <div class="col-wrap" data-col="${col.id}">
+    <div class="col">
+      <div class="col-header" oncontextmenu="showCtx(event,${col.id})">
+        <div class="col-color-bar" style="background:${col.color||'#6c63ff'}"></div>
+        <input class="col-title-input" value="${esc(col.title)}"
+          onblur="renameCol(${col.id},this.value)"
+          onkeydown="if(event.key==='Enter')this.blur()"
+          onclick="event.stopPropagation()">
+        <span class="col-count">${cards.length}</span>
+        <button class="col-menu-btn" onclick="showCtx(event,${col.id})">⋯</button>
+      </div>
+      <div class="col-body" id="colbody-${col.id}"
+        ondragover="onDragOver(event,${col.id})"
+        ondrop="onDrop(event,${col.id})"
+        ondragleave="onDragLeave(event)">
+        ${cards.map(c => cardHTML(c)).join('')}
+        <button class="add-card-btn" onclick="showQuickAdd(${col.id})">+ إضافة كرت</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function cardHTML(c) {
+  const checks = c.checklist||[];
+  const doneChecks = checks.filter(ch=>ch.done).length;
+  const pct = checks.length ? Math.round(doneChecks/checks.length*100) : 0;
+  const dueClass = getDueClass(c.due_date, c.due_time);
+  const colorClass = c.color ? 'card-'+c.color : '';
+
+  return `
+  <div class="card ${colorClass}" draggable="true"
+    id="card-${c.id}"
+    data-card="${c.id}"
+    ondragstart="onDragStart(event,${c.id})"
+    ondragend="onDragEnd(event)"
+    onclick="openCard(${c.id})">
+    <div class="card-title">${esc(c.title)}</div>
+    <div class="card-footer">
+      ${c.due_date ? `<span class="card-due ${dueClass}">📅 ${c.due_date}${c.due_time?' '+fmt12(c.due_time):''}</span>` : ''}
+      ${checks.length ? `
+        <div class="card-checklist-prog">
+          <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
+          ${doneChecks}/${checks.length}
+        </div>` : ''}
+    </div>
+  </div>`;
+}
+
+function getDueClass(date, time) {
+  if (!date) return '';
+  const now = new Date();
+  const due = time ? new Date(date+'T'+time) : new Date(date+'T23:59:59');
+  const diff = due - now;
+  if (diff < 0) return 'overdue';
+  if (diff < 86400000) return 'due-today';
+  if (diff < 3*86400000) return 'due-soon';
+  return '';
+}
+
+function fmt12(t) {
+  if (!t) return '';
+  const [h,m] = t.split(':').map(Number);
+  return (h%12||12)+':'+(String(m).padStart(2,'0'))+' '+(h<12?'ص':'م');
+}
+
+function esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Column Actions ─────────────────────────────────────────────────────────────
+function openAddCol() {
+  document.getElementById('addColForm').style.display='block';
+  document.getElementById('newColTitle').focus();
+}
+function closeAddCol() {
+  document.getElementById('addColForm').style.display='none';
+  document.getElementById('newColTitle').value='';
+}
+function selectColColor(c,el) {
+  newColColor=c;
+  document.querySelectorAll('#addColForm .swatch').forEach(s=>s.classList.remove('selected'));
+  el.classList.add('selected');
+}
+async function confirmAddCol() {
+  const title = document.getElementById('newColTitle').value.trim();
+  if (!title) return;
+  await fetch(API+'/kanban/columns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,color:newColColor})});
+  closeAddCol();
+  toast('✅ تم إضافة العمود','ok');
+  load();
+}
+
+async function renameCol(id, title) {
+  if (!title.trim()) return;
+  await fetch(API+'/kanban/columns/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});
+}
+
+// Context menu
+function showCtx(e, colId) {
+  e.preventDefault(); e.stopPropagation();
+  ctxColId = colId;
+  const menu = document.getElementById('ctxMenu');
+  menu.style.right = (window.innerWidth - e.clientX) + 'px';
+  menu.style.top   = e.clientY + 'px';
+  menu.classList.add('show');
+}
+document.addEventListener('click', ()=>document.getElementById('ctxMenu').classList.remove('show'));
+
+function ctxRename() {
+  const col = board.find(c=>c.id==ctxColId);
+  if (!col) return;
+  const t = prompt('اسم العمود الجديد:', col.title);
+  if (t) { renameCol(ctxColId,t); col.title=t; render(); }
+}
+
+function ctxChangeColor() {
+  const colors=['#0052cc','#36b37e','#ff991f','#de350b','#6554c0','#e91e8c','#172b4d'];
+  const c = prompt('اللون (مثال: #0052cc):', '');
+  if (c) { fetch(API+'/kanban/columns/'+ctxColId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({color:c})}); load(); }
+}
+
+async function ctxDelete() {
+  if (!confirm('تأكيد حذف العمود وكل كروته؟')) return;
+  await fetch(API+'/kanban/columns/'+ctxColId,{method:'DELETE'});
+  toast('🗑 تم الحذف','err');
+  load();
+}
+
+// ── Quick Add ─────────────────────────────────────────────────────────────────
+function showQuickAdd(colId) {
+  // أزل أي quick add موجود
+  document.querySelectorAll('.quick-add').forEach(el=>el.remove());
+  const body = document.getElementById('colbody-'+colId);
+  const addBtn = body.querySelector('.add-card-btn');
+  const qa = document.createElement('div');
+  qa.className='quick-add';
+  qa.innerHTML=`
+    <textarea class="quick-textarea" id="qa-${colId}" placeholder="عنوان الكرت..." autofocus rows="2"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitQuickAdd(${colId})}"></textarea>
+    <div class="quick-actions">
+      <button class="btn-add-card" onclick="submitQuickAdd(${colId})">إضافة كرت</button>
+      <button class="btn-cancel-add" onclick="this.closest('.quick-add').remove()">✕</button>
+    </div>`;
+  body.insertBefore(qa, addBtn);
+  document.getElementById('qa-'+colId).focus();
+}
+
+async function submitQuickAdd(colId) {
+  const ta = document.getElementById('qa-'+colId);
+  const title = ta.value.trim();
+  if (!title) return;
+  await fetch(API+'/kanban/cards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({column_id:colId,title})});
+  toast('✅ تمت الإضافة','ok');
+  load();
+}
+
+// ── Open Card ─────────────────────────────────────────────────────────────────
+function openCard(cardId) {
+  currentCardId = cardId;
+  const card = findCard(cardId);
+  if (!card) return;
+
+  document.getElementById('m-title').value = card.title;
+  document.getElementById('m-desc').value  = card.description||'';
+  document.getElementById('m-date').value  = card.due_date||'';
+  document.getElementById('m-time').value  = card.due_time||'';
+
+  // colors
+  document.querySelectorAll('#color-swatches .swatch').forEach(s=>{
+    s.classList.toggle('selected', s.dataset.color === (card.color||''));
+  });
+
+  renderChecklist(card.checklist||[]);
+  document.getElementById('cardModal').classList.add('open');
+
+  // save title on blur
+  document.getElementById('m-title').onblur = ()=>saveCardField('title',document.getElementById('m-title').value);
+}
+
+function renderChecklist(items) {
+  const total = items.length;
+  const done  = items.filter(i=>i.done).length;
+  const pct   = total ? Math.round(done/total*100) : 0;
+
+  document.getElementById('checklist-progress').style.display = total ? 'block' : 'none';
+  document.getElementById('p-fill').style.width = pct+'%';
+  document.getElementById('checklist-pct').textContent = total ? pct+'%' : '';
+
+  document.getElementById('checklist-items').innerHTML = items.map(item=>`
+    <div class="checklist-item" id="ci-${item.id}">
+      <div class="check-box ${item.done?'checked':''}" onclick="toggleCheck(${item.id},${!item.done})">${item.done?'✓':''}</div>
+      <input class="check-title ${item.done?'done':''}" value="${esc(item.title)}"
+        onblur="renameCheck(${item.id},this.value)"
+        onkeydown="if(event.key==='Enter')this.blur()">
+      <button class="check-del" onclick="deleteCheck(${item.id})">✕</button>
+    </div>`).join('');
+}
+
+async function toggleCheck(checkId, done) {
+  await fetch(API+'/kanban/checklist/'+checkId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({done})});
+  const card = findCard(currentCardId);
+  const item = card.checklist.find(c=>c.id==checkId);
+  if (item) item.done=done;
+  renderChecklist(card.checklist);
+  // update card in board
+  reRenderCard(currentCardId);
+}
+
+async function renameCheck(checkId, title) {
+  await fetch(API+'/kanban/checklist/'+checkId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});
+  const card=findCard(currentCardId);
+  const item=card.checklist.find(c=>c.id==checkId);
+  if(item) item.title=title;
+}
+
+async function deleteCheck(checkId) {
+  await fetch(API+'/kanban/checklist/'+checkId,{method:'DELETE'});
+  const card=findCard(currentCardId);
+  card.checklist = card.checklist.filter(c=>c.id!=checkId);
+  renderChecklist(card.checklist);
+  reRenderCard(currentCardId);
+}
+
+async function addChecklistItem() {
+  const input = document.getElementById('new-item-input');
+  const title = input.value.trim();
+  if (!title) return;
+  const res = await fetch(API+'/kanban/checklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({card_id:currentCardId,title})});
+  const item = await res.json();
+  const card = findCard(currentCardId);
+  card.checklist.push(item);
+  renderChecklist(card.checklist);
+  reRenderCard(currentCardId);
+  input.value='';
+  input.focus();
+}
+
+async function saveCardField(field, value) {
+  if (!currentCardId) return;
+  const body={};
+  body[field]=value;
+  await fetch(API+'/kanban/cards/'+currentCardId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const card=findCard(currentCardId);
+  if(card) card[field]=value;
+  reRenderCard(currentCardId);
+}
+
+async function setCardColor(color, el) {
+  document.querySelectorAll('#color-swatches .swatch').forEach(s=>s.classList.remove('selected'));
+  el.classList.add('selected');
+  await saveCardField('color',color);
+}
+
+function closeModal() { document.getElementById('cardModal').classList.remove('open'); currentCardId=null; }
+function closeModalBg(e) { if(e.target===e.currentTarget) closeModal(); }
+
+async function deleteCurrentCard() {
+  if (!confirm('تأكيد حذف الكرت؟')) return;
+  await fetch(API+'/kanban/cards/'+currentCardId,{method:'DELETE'});
+  toast('🗑 تم الحذف','err');
+  closeModal();
+  load();
+}
+
+// Move card
+function moveCardToCol() {
+  const modal = document.getElementById('moveModal');
+  const container = document.getElementById('move-cols');
+  container.innerHTML = board.filter(c=>c.id!=currentColId).map(c=>`
+    <button onclick="confirmMove(${c.id})" style="display:block;width:100%;text-align:right;background:rgba(0,0,0,.06);border:none;border-radius:6px;padding:10px;font-family:'Tajawal',sans-serif;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:6px;direction:rtl;">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.color};margin-left:6px"></span>${esc(c.title)}</button>`).join('');
+  modal.classList.add('open');
+}
+
+async function confirmMove(colId) {
+  await fetch(API+'/kanban/cards/'+currentCardId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({column_id:colId})});
+  toast('↔️ تم النقل','ok');
+  closeMoveModal2();
+  closeModal();
+  load();
+}
+
+function closeMoveModal(e) { if(e.target===e.currentTarget) closeMoveModal2(); }
+function closeMoveModal2() { document.getElementById('moveModal').classList.remove('open'); }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function findCard(id) {
+  for (const col of board) {
+    const c = (col.cards||[]).find(c=>c.id==id);
+    if (c) { currentColId=col.id; return c; }
+  }
+  return null;
+}
+
+function reRenderCard(cardId) {
+  const card = findCard(cardId);
+  if (!card) return;
+  const el = document.getElementById('card-'+cardId);
+  if (el) el.outerHTML = cardHTML(card);
+  initDrag();
+}
+
+// ── Drag & Drop ───────────────────────────────────────────────────────────────
+function initDrag() {
+  document.querySelectorAll('.card').forEach(card=>{
+    card.addEventListener('dragstart', e=>{
+      dragCard = parseInt(card.dataset.card);
+      setTimeout(()=>card.classList.add('dragging'),0);
+    });
+    card.addEventListener('dragend', ()=>{
+      card.classList.remove('dragging');
+      document.querySelectorAll('.col-body').forEach(b=>b.classList.remove('drag-over'));
+    });
+  });
+}
+
+function onDragOver(e, colId) {
+  e.preventDefault();
+  document.querySelectorAll('.col-body').forEach(b=>b.classList.remove('drag-over'));
+  document.getElementById('colbody-'+colId).classList.add('drag-over');
+  dragCol = colId;
+}
+
+function onDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    e.currentTarget.classList.remove('drag-over');
+  }
+}
+
+async function onDrop(e, colId) {
+  e.preventDefault();
+  document.querySelectorAll('.col-body').forEach(b=>b.classList.remove('drag-over'));
+  if (!dragCard) return;
+  await fetch(API+'/kanban/cards/'+dragCard,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({column_id:colId})});
+  dragCard=null;
+  load();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg,type='ok') {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className='toast '+type+' show';
+  setTimeout(()=>el.classList.remove('show'),2500);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
