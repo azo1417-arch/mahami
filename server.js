@@ -1,12 +1,34 @@
 process.env.TZ = 'Asia/Riyadh';
 
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const cron    = require('node-cron');
 const axios   = require('axios');
 const { Pool }= require('pg');
 const path    = require('path');
 
 const app = express();
+
+// ── Rate Limiting ────────────────────────────────────────────────────
+const apiLimiter = rateLimit({
+  windowMs: 15*60*1000,
+  max: 100,
+  message: 'عدد الطلبات كثير جداً، حاول لاحقاً',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15*60*1000,
+  max: 5,
+  message: 'محاولات دخول كثيرة جداً',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use('/webhook', apiLimiter);
+app.use('/tasks', apiLimiter);
+app.use('/kanban', apiLimiter);
 app.use((req,res,next)=>{res.header('Access-Control-Allow-Origin','*');res.header('Access-Control-Allow-Methods','GET,POST,PATCH,DELETE,OPTIONS');res.header('Access-Control-Allow-Headers','Content-Type');if(req.method==='OPTIONS')return res.sendStatus(200);next();});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -1321,7 +1343,8 @@ function menuMsg(name) {
 }
 
 // ─── Cron: نهاية الإجازة ─────────────────────────────────────────────────────
-cron.schedule('0 9 * * *', async function() {
+cron.schedule('0 9 * * 0-4', async function() { // السبت-الخميس فقط
+
   try {
     const today = todayStr();
     const v = await getVacation();
@@ -1417,7 +1440,8 @@ cron.schedule('0 9 * * *', async function() {
 }, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: تذكيرات متكررة ────────────────────────────────────────────────
-cron.schedule('0 0 * * *', async function() {
+cron.schedule('0 0 * * 0-4', async function() { // السبت-الخميس فقط
+
   try {
     const today    = todayStr();
     const dayOfWeek = new Date().getDay(); // 0=أحد, 1=اثنين...
@@ -1622,7 +1646,8 @@ cron.schedule('* * * * *', async function() {
 }, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: ملخص نهاية اليوم 10 م ────────────────────────────────────────────
-cron.schedule('0 22 * * *', async function() {
+cron.schedule('0 22 * * 0-4', async function() { // السبت إلى الخميس فقط (0=جمعة، 6=سبت)
+
   try {
     const today11 = todayStr();
     const [doneToday, pendingToday, tomorrowT] = await Promise.all([
@@ -1652,7 +1677,8 @@ cron.schedule('0 22 * * *', async function() {
 }, { timezone: 'Asia/Riyadh' });
 
 // ─── Cron: تذكير 24 ساعة قبل الاجتماعات المهمة ─────────────────────────────
-cron.schedule('0 11 * * *', async function() {
+cron.schedule('0 11 * * 0-4', async function() { // السبت-الخميس فقط
+
   try {
     const tomorrow3 = new Date(); tomorrow3.setDate(tomorrow3.getDate()+1);
     const tom3 = tomorrow3.getFullYear()+'-'+String(tomorrow3.getMonth()+1).padStart(2,'0')+'-'+String(tomorrow3.getDate()).padStart(2,'0');
@@ -5038,6 +5064,14 @@ app.get('/kanban', function(req,res) { res.sendFile(require('path').join(__dirna
 app.get('/', function(req,res) {
   res.json({ status:'مهامي شغّال', time: new Date().toLocaleString('ar-SA') });
 });
+
+// ── CSRF Protection ──────────────────────────────────────────────────
+const csrfTokens = new Set();
+function generateCSRFToken() {
+  const token = require('crypto').randomBytes(32).toString('hex');
+  csrfTokens.add(token);
+  return token;
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() { console.log('مهامي على port ' + PORT); });
