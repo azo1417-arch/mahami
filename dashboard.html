@@ -3,24 +3,34 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>مهامي — لوحة الإدارة</title>
-<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet">
+<title>إدارة المهام</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&family=Lora:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --primary: #2c5aa0;
-  --primary-light: #4a7bc4;
-  --accent: #d4a574;
-  --light-bg: #f8f9fb;
-  --card-bg: #ffffff;
-  --card-shadow: rgba(44,90,160,0.08);
-  --text-primary: #1a1f3a;
-  --text-secondary: #5a6b8a;
-  --text-tertiary: #8a9aaa;
-  --border: #e8ecf1;
-  --success: #4caf50;
-  --warning: #ff9800;
-  --danger: #f44336;
-  --transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  --primary: #1e3a5f;
+  --primary-light: #2c5aa0;
+  --primary-dark: #142d47;
+  --secondary: #e8f1f8;
+  --accent: #c4a66a;
+  --success: #4a9575;
+  --warning: #d97706;
+  --danger: #c53030;
+  --neutral-50: #fafbfc;
+  --neutral-100: #f9fafb;
+  --neutral-200: #f3f4f6;
+  --neutral-300: #e5e7eb;
+  --neutral-400: #d1d5db;
+  --neutral-500: #9ca3af;
+  --neutral-700: #374151;
+  --neutral-900: #111827;
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-tertiary: #6b7280;
+  --border: #e5e7eb;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
+  --shadow-lg: 0 10px 15px rgba(0,0,0,0.08);
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -28,122 +38,94 @@
 html, body {
   width:100%;
   height:100%;
-  overflow-x:hidden;
 }
 
 body {
   font-family:'Tajawal',sans-serif;
-  background:linear-gradient(135deg, var(--light-bg) 0%, #f5f7fa 100%);
+  background:#fafbfc;
   color:var(--text-primary);
   min-height:100vh;
-  position:relative;
-}
-
-body::before {
-  content:'';
-  position:fixed;
-  top:-50%;
-  right:-50%;
-  width:200%;
-  height:200%;
-  background:radial-gradient(circle at 20% 50%, rgba(44,90,160,0.04) 0%, transparent 50%),
-             radial-gradient(circle at 80% 80%, rgba(212,165,116,0.03) 0%, transparent 50%);
-  pointer-events:none;
-  z-index:0;
-  animation:drift 30s infinite linear;
-}
-
-@keyframes drift {
-  0% { transform:translate(0, 0); }
-  100% { transform:translate(20px, 20px); }
+  overflow-x:hidden;
 }
 
 .header {
   position:sticky;
   top:0;
   z-index:50;
-  padding:24px 48px;
+  padding:32px 48px;
   background:#ffffff;
-  border-bottom:2px solid var(--border);
-  box-shadow:0 4px 16px var(--card-shadow);
+  border-bottom:1px solid var(--border);
   display:flex;
   align-items:center;
-  gap:32px;
+  gap:40px;
   justify-content:space-between;
+  box-shadow:var(--shadow-sm);
 }
 
 .logo-brand {
   display:flex;
   align-items:center;
-  gap:16px;
-  position:relative;
-  z-index:2;
+  gap:20px;
 }
 
 .logo-icon {
-  width:56px;
-  height:56px;
-  border-radius:12px;
+  width:72px;
+  height:72px;
+  border-radius:16px;
   background:linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
   display:flex;
   align-items:center;
   justify-content:center;
-  font-size:32px;
-  box-shadow:0 8px 24px rgba(44,90,160,0.2);
-  color:#fff;
+  font-size:36px;
+  box-shadow:var(--shadow-md);
+  color:#ffffff;
 }
 
 .logo-text h1 {
-  font-size:28px;
-  font-weight:900;
-  color:var(--text-primary);
-  font-family:'Playfair Display',serif;
-  letter-spacing:-1px;
+  font-size:32px;
+  font-weight:800;
+  color:var(--primary);
+  font-family:'Lora',serif;
+  letter-spacing:-0.5px;
 }
 
 .logo-text p {
-  font-size:11px;
+  font-size:13px;
   color:var(--text-secondary);
-  font-weight:700;
-  text-transform:uppercase;
-  letter-spacing:2px;
+  margin-top:4px;
+  font-weight:500;
+  letter-spacing:0.5px;
 }
 
 .header-controls {
   display:flex;
   align-items:center;
-  gap:20px;
-  position:relative;
-  z-index:2;
+  gap:16px;
 }
 
 .btn-primary {
   background:linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
   border:none;
   border-radius:10px;
-  padding:12px 32px;
-  color:#fff;
-  font-weight:800;
+  padding:12px 28px;
+  color:white;
+  font-weight:700;
   font-size:12px;
   cursor:pointer;
   transition:var(--transition);
-  box-shadow:0 6px 20px rgba(44,90,160,0.25);
+  box-shadow:var(--shadow-md);
   text-transform:uppercase;
-  letter-spacing:1px;
-  display:flex;
-  align-items:center;
-  gap:8px;
+  letter-spacing:0.5px;
+  font-family:'Tajawal',sans-serif;
 }
 
 .btn-primary:hover {
   transform:translateY(-2px);
-  box-shadow:0 10px 32px rgba(44,90,160,0.35);
+  box-shadow:var(--shadow-lg);
 }
 
 .container {
-  position:relative;
-  z-index:2;
-  padding:40px;
+  padding:40px 48px;
   max-width:1600px;
   margin:0 auto;
 }
@@ -156,17 +138,66 @@ body::before {
   font-size:36px;
   font-weight:900;
   color:var(--text-primary);
-  font-family:'Playfair Display',serif;
-  letter-spacing:-1px;
-  margin-bottom:12px;
+  font-family:'Lora',serif;
+  letter-spacing:-0.5px;
+  margin-bottom:8px;
 }
 
 .section-subtitle {
   font-size:13px;
   color:var(--text-secondary);
   text-transform:uppercase;
-  letter-spacing:2px;
-  font-weight:700;
+  letter-spacing:0.5px;
+  font-weight:600;
+}
+
+.stats-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));
+  gap:24px;
+  margin-bottom:40px;
+}
+
+.stat-card {
+  background:#ffffff;
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:28px;
+  box-shadow:var(--shadow-sm);
+  transition:var(--transition);
+}
+
+.stat-card:hover {
+  border-color:var(--primary);
+  box-shadow:var(--shadow-md);
+  transform:translateY(-2px);
+}
+
+.stat-label {
+  font-size:12px;
+  color:var(--text-secondary);
+  text-transform:uppercase;
+  letter-spacing:0.5px;
+  font-weight:600;
+  margin-bottom:12px;
+}
+
+.stat-value {
+  font-size:48px;
+  font-weight:800;
+  color:var(--primary);
+  font-family:'Lora',serif;
+}
+
+.stat-change {
+  font-size:12px;
+  color:var(--success);
+  margin-top:12px;
+  font-weight:600;
+}
+
+.stat-change.negative {
+  color:var(--danger);
 }
 
 .board {
@@ -181,7 +212,6 @@ body::before {
   flex-direction:column;
   gap:16px;
   position:relative;
-  min-height:600px;
 }
 
 .column-header {
@@ -189,15 +219,16 @@ body::before {
   align-items:center;
   justify-content:space-between;
   padding:20px;
-  background:#fff;
+  background:#ffffff;
   border-radius:12px;
-  border:2px solid var(--border);
+  border:1px solid var(--border);
   transition:var(--transition);
+  box-shadow:var(--shadow-sm);
 }
 
 .column-header:hover {
   border-color:var(--primary);
-  box-shadow:0 6px 20px var(--card-shadow);
+  box-shadow:var(--shadow-md);
 }
 
 .column-title {
@@ -208,42 +239,42 @@ body::before {
 }
 
 .column-color {
-  width:20px;
-  height:20px;
-  border-radius:6px;
-  background:var(--primary);
-  box-shadow:0 4px 12px rgba(44,90,160,0.2);
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  box-shadow:var(--shadow-sm);
   cursor:pointer;
   transition:var(--transition);
 }
 
 .column-color:hover {
-  transform:scale(1.15);
+  transform:scale(1.25);
 }
 
 .column-name {
   font-size:16px;
-  font-weight:800;
+  font-weight:700;
   color:var(--text-primary);
   flex:1;
   cursor:text;
   padding:6px 12px;
-  border-radius:8px;
+  border-radius:6px;
   transition:var(--transition);
+  font-family:'Lora',serif;
 }
 
 .column-name:hover {
-  background:rgba(44,90,160,0.08);
+  background:var(--secondary);
 }
 
 .column-count {
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  width:28px;
-  height:28px;
-  background:linear-gradient(135deg, rgba(44,90,160,0.1), rgba(212,165,116,0.1));
-  border:1px solid var(--border);
+  width:36px;
+  height:36px;
+  background:var(--secondary);
+  border:1px solid var(--primary-light);
   border-radius:6px;
   font-size:12px;
   font-weight:800;
@@ -264,28 +295,29 @@ body::before {
 .col-btn {
   width:32px;
   height:32px;
-  border-radius:8px;
-  border:2px solid var(--border);
-  background:#fff;
-  color:var(--primary);
+  border-radius:6px;
+  border:1px solid var(--border);
+  background:var(--neutral-100);
+  color:var(--text-secondary);
   cursor:pointer;
   font-size:14px;
   display:flex;
   align-items:center;
   justify-content:center;
   transition:var(--transition);
+  font-weight:700;
 }
 
 .col-btn:hover {
-  background:rgba(44,90,160,0.08);
+  background:var(--secondary);
   border-color:var(--primary);
-  transform:scale(1.1);
+  color:var(--primary);
 }
 
 .col-btn.delete:hover {
-  background:rgba(244,67,54,0.1);
-  color:#f44336;
-  border-color:#f44336;
+  background:#fee8e8;
+  color:var(--danger);
+  border-color:var(--danger);
 }
 
 .cards-area {
@@ -312,10 +344,10 @@ body::before {
 }
 
 .card {
-  background:#fff;
-  border:2px solid var(--border);
-  border-radius:12px;
-  padding:18px;
+  background:#ffffff;
+  border:1.5px solid var(--border);
+  border-radius:10px;
+  padding:16px;
   cursor:grab;
   transition:var(--transition);
   display:flex;
@@ -323,18 +355,44 @@ body::before {
   gap:10px;
   position:relative;
   overflow:hidden;
-  box-shadow:0 4px 12px rgba(0,0,0,0.05);
+  box-shadow:var(--shadow-sm);
+}
+
+.card::before {
+  content:'';
+  position:absolute;
+  top:0;
+  left:0;
+  right:0;
+  height:3px;
+  background:var(--primary);
+  transform:scaleX(0);
+  transition:var(--transition);
+  transform-origin:right;
 }
 
 .card:hover {
   border-color:var(--primary);
-  box-shadow:0 8px 24px var(--card-shadow);
-  transform:translateY(-4px);
+  box-shadow:var(--shadow-md);
+  transform:translateY(-2px);
+}
+
+.card:hover::before {
+  transform:scaleX(1);
 }
 
 .card:active {
   cursor:grabbing;
-  opacity:0.9;
+}
+
+.card.done {
+  opacity:0.6;
+  background:var(--neutral-100);
+}
+
+.card.overdue {
+  border-left:4px solid var(--danger);
+  background:#fef6f6;
 }
 
 .card-header {
@@ -342,15 +400,22 @@ body::before {
   justify-content:space-between;
   align-items:start;
   gap:10px;
+  position:relative;
+  z-index:1;
 }
 
 .card-title {
   font-size:14px;
-  font-weight:700;
+  font-weight:600;
   color:var(--text-primary);
-  line-height:1.4;
+  line-height:1.5;
   flex:1;
   transition:var(--transition);
+}
+
+.card.done .card-title {
+  text-decoration:line-through;
+  opacity:0.7;
 }
 
 .card:hover .card-title {
@@ -361,17 +426,18 @@ body::before {
   width:28px;
   height:28px;
   border-radius:6px;
-  border:2px solid var(--border);
-  background:#fff;
+  border:1px solid var(--border);
+  background:var(--neutral-100);
   color:var(--text-tertiary);
   cursor:pointer;
-  font-size:12px;
+  font-size:13px;
   display:flex;
   align-items:center;
   justify-content:center;
   transition:var(--transition);
-  opacity:0;
   flex-shrink:0;
+  opacity:0;
+  font-weight:700;
 }
 
 .card:hover .card-remove {
@@ -379,35 +445,50 @@ body::before {
 }
 
 .card-remove:hover {
-  background:rgba(244,67,54,0.1);
-  color:#f44336;
-  border-color:#f44336;
+  background:#fee8e8;
+  color:var(--danger);
+  border-color:var(--danger);
 }
 
 .card-meta {
   display:flex;
-  gap:6px;
+  gap:8px;
   flex-wrap:wrap;
   font-size:11px;
   color:var(--text-tertiary);
+  position:relative;
+  z-index:1;
 }
 
 .card-date {
   display:inline-flex;
   align-items:center;
-  gap:3px;
-  background:linear-gradient(135deg, rgba(44,90,160,0.08), rgba(44,90,160,0.05));
+  gap:4px;
+  background:var(--secondary);
   padding:4px 10px;
   border-radius:6px;
-  border:1px solid rgba(44,90,160,0.15);
+  border:1px solid var(--primary-light);
   color:var(--primary);
   font-weight:600;
+  transition:var(--transition);
+}
+
+.card-date.overdue {
+  background:#fee8e8;
+  color:var(--danger);
+  border-color:var(--danger);
+}
+
+.card-date.today {
+  background:#e6f5f0;
+  color:var(--success);
+  border-color:var(--success);
 }
 
 .add-btn {
-  background:rgba(44,90,160,0.08);
-  border:2px dashed var(--border);
-  border-radius:12px;
+  background:var(--secondary);
+  border:1.5px dashed var(--primary);
+  border-radius:10px;
   padding:14px;
   color:var(--primary);
   cursor:pointer;
@@ -415,20 +496,22 @@ body::before {
   font-size:12px;
   transition:var(--transition);
   text-align:center;
+  position:relative;
+  z-index:1;
+  font-family:'Tajawal',sans-serif;
 }
 
 .add-btn:hover {
-  background:rgba(44,90,160,0.15);
-  border-color:var(--primary);
-  transform:scale(1.01);
+  background:var(--neutral-200);
+  border-color:var(--primary-light);
 }
 
 .add-column {
   flex-shrink:0;
   width:360px;
   height:fit-content;
-  background:#fff;
-  border:2px dashed var(--border);
+  background:#ffffff;
+  border:1.5px dashed var(--primary);
   border-radius:12px;
   padding:60px 24px;
   display:flex;
@@ -438,17 +521,19 @@ body::before {
   gap:12px;
   cursor:pointer;
   transition:var(--transition);
-  box-shadow:0 4px 12px rgba(0,0,0,0.05);
+  box-shadow:var(--shadow-sm);
 }
 
 .add-column:hover {
-  border-color:var(--primary);
-  background:rgba(44,90,160,0.05);
-  transform:scale(1.01);
+  border-color:var(--primary-light);
+  background:var(--secondary);
+  box-shadow:var(--shadow-md);
+  transform:translateY(-2px);
 }
 
 .add-column-icon {
   font-size:40px;
+  color:var(--primary);
 }
 
 .add-column-text {
@@ -461,7 +546,8 @@ body::before {
 .modal-overlay {
   position:fixed;
   inset:0;
-  background:rgba(0,0,0,0.35);
+  background:rgba(0,0,0,0.25);
+  backdrop-filter:blur(4px);
   z-index:100;
   display:none;
   align-items:center;
@@ -471,7 +557,7 @@ body::before {
 
 .modal-overlay.show {
   display:flex;
-  animation:fadeIn .3s ease;
+  animation:fadeIn .2s ease;
 }
 
 @keyframes fadeIn {
@@ -480,20 +566,20 @@ body::before {
 }
 
 .modal-box {
-  background:#fff;
-  border-radius:16px;
+  background:#ffffff;
+  border:1px solid var(--border);
+  border-radius:14px;
   padding:40px;
   width:100%;
   max-width:500px;
-  box-shadow:0 20px 60px rgba(0,0,0,0.15);
+  box-shadow:var(--shadow-lg);
   position:relative;
   overflow:hidden;
-  animation:modalIn .4s ease;
-  border:1px solid var(--border);
+  animation:modalIn .3s ease;
 }
 
 @keyframes modalIn {
-  from { opacity:0; transform:scale(0.95) translateY(-30px); }
+  from { opacity:0; transform:scale(0.95) translateY(-20px); }
   to { opacity:1; transform:scale(1) translateY(0); }
 }
 
@@ -505,29 +591,30 @@ body::before {
 }
 
 .modal-title {
-  font-size:24px;
-  font-weight:900;
-  color:var(--text-primary);
-  font-family:'Playfair Display',serif;
+  font-size:26px;
+  font-weight:800;
+  color:var(--primary);
+  font-family:'Lora',serif;
 }
 
 .modal-close {
   width:40px;
   height:40px;
-  border-radius:10px;
-  border:2px solid var(--border);
-  background:#fff;
+  border-radius:8px;
+  border:1px solid var(--border);
+  background:var(--neutral-100);
   color:var(--primary);
   cursor:pointer;
-  font-size:22px;
+  font-size:20px;
   display:flex;
   align-items:center;
   justify-content:center;
   transition:var(--transition);
+  font-weight:700;
 }
 
 .modal-close:hover {
-  background:rgba(44,90,160,0.08);
+  background:var(--secondary);
   border-color:var(--primary);
   transform:rotate(90deg);
 }
@@ -543,14 +630,14 @@ body::before {
   color:var(--primary);
   margin-bottom:8px;
   text-transform:uppercase;
-  letter-spacing:1.5px;
+  letter-spacing:0.5px;
 }
 
 .form-input, .form-select {
   width:100%;
-  background:#f8f9fb;
-  border:2px solid var(--border);
-  border-radius:10px;
+  background:var(--neutral-100);
+  border:1px solid var(--border);
+  border-radius:8px;
   padding:12px 14px;
   color:var(--text-primary);
   font-family:'Tajawal',sans-serif;
@@ -561,25 +648,26 @@ body::before {
 }
 
 .form-input:focus, .form-select:focus {
-  background:#fff;
+  background:#ffffff;
   border-color:var(--primary);
-  box-shadow:0 0 0 4px rgba(44,90,160,0.1);
+  box-shadow:0 0 0 3px rgba(30,58,95,0.1);
 }
 
 .color-picker {
   display:grid;
   grid-template-columns:repeat(6, 1fr);
   gap:12px;
+  margin-bottom:20px;
 }
 
 .color-option {
   width:50px;
   height:50px;
-  border-radius:10px;
+  border-radius:8px;
   cursor:pointer;
   border:3px solid transparent;
   transition:var(--transition);
-  box-shadow:0 4px 12px rgba(0,0,0,0.1);
+  box-shadow:var(--shadow-sm);
 }
 
 .color-option:hover {
@@ -588,46 +676,48 @@ body::before {
 
 .color-option.selected {
   border-color:var(--primary);
-  box-shadow:0 0 0 2px rgba(44,90,160,0.2), 0 8px 20px rgba(0,0,0,0.15);
+  box-shadow:var(--shadow-md);
 }
 
 .submit-btn {
   width:100%;
   background:linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
   border:none;
-  border-radius:10px;
+  border-radius:8px;
   padding:14px;
-  color:#fff;
-  font-weight:800;
+  color:white;
+  font-family:'Tajawal',sans-serif;
   font-size:13px;
+  font-weight:800;
   cursor:pointer;
   transition:var(--transition);
-  box-shadow:0 6px 20px rgba(44,90,160,0.25);
+  box-shadow:var(--shadow-md);
   text-transform:uppercase;
-  letter-spacing:1px;
+  letter-spacing:0.5px;
 }
 
 .submit-btn:hover {
   transform:translateY(-2px);
-  box-shadow:0 10px 32px rgba(44,90,160,0.35);
+  box-shadow:var(--shadow-lg);
 }
 
 .toast {
   position:fixed;
   bottom:40px;
   right:40px;
-  background:#fff;
-  border:2px solid var(--border);
+  background:#ffffff;
+  border:1px solid var(--border);
   border-radius:10px;
   padding:16px 24px;
-  color:var(--text-primary);
+  color:var(--primary);
   font-size:13px;
   z-index:200;
-  box-shadow:0 8px 24px rgba(0,0,0,0.1);
+  box-shadow:var(--shadow-lg);
   display:none;
   align-items:center;
   gap:10px;
-  animation:toastSlide .4s ease;
+  animation:toastSlide .3s ease;
+  font-weight:600;
 }
 
 @keyframes toastSlide {
@@ -638,6 +728,22 @@ body::before {
 .toast.show {
   display:flex;
 }
+
+.empty-state {
+  text-align:center;
+  padding:30px 15px;
+  color:var(--text-tertiary);
+}
+
+.empty-state-icon {
+  font-size:40px;
+  margin-bottom:12px;
+}
+
+.empty-state-text {
+  font-size:13px;
+  color:var(--text-secondary);
+}
 </style>
 </head>
 <body>
@@ -646,20 +752,23 @@ body::before {
   <div class="logo-brand">
     <div class="logo-icon">📊</div>
     <div class="logo-text">
-      <h1>مهامي</h1>
-      <p>لوحة الإدارة</p>
+      <h1>إدارة المهام</h1>
+      <p>تنظيم العمل والمشاريع</p>
     </div>
   </div>
-
   <div class="header-controls">
-    <button class="btn-primary" onclick="openNewColumnModal()">✨ عمود جديد</button>
+    <button class="btn-primary" onclick="openNewColumnModal()">+ عمود جديد</button>
   </div>
 </div>
 
 <div class="container">
   <div class="section-header">
-    <h2 class="section-title">لوحة المهام</h2>
-    <p class="section-subtitle">أنظم مشاريعك وأوقاتك</p>
+    <h2 class="section-title">المهام والمشاريع</h2>
+    <p class="section-subtitle">إدارة فعّالة للعمل اليومي</p>
+  </div>
+
+  <div class="stats-grid" id="statsGrid">
+    <!-- Stats render here -->
   </div>
 
   <div class="board" id="board">
@@ -671,21 +780,28 @@ body::before {
 <div class="modal-overlay" id="columnModal" onclick="closeModalBg(event)">
   <div class="modal-box" onclick="event.stopPropagation()">
     <div class="modal-header">
-      <h3 class="modal-title">✨ عمود جديد</h3>
+      <h3 class="modal-title">+ عمود جديد</h3>
       <button class="modal-close" onclick="closeColumnModal()">✕</button>
     </div>
 
     <div class="form-group">
       <label class="form-label">اسم العمود</label>
-      <input type="text" class="form-input" id="columnName" placeholder="قيد التنفيذ...">
+      <input type="text" class="form-input" id="columnName" placeholder="مثلاً: قيد التنفيذ...">
     </div>
 
     <div class="form-group">
       <label class="form-label">اختر اللون</label>
-      <div class="color-picker" id="colorPicker"></div>
+      <div class="color-picker" id="colorPicker">
+        <div class="color-option selected" data-color="#1e3a5f" style="background:#1e3a5f;" onclick="selectColor(this)"></div>
+        <div class="color-option" data-color="#2c5aa0" style="background:#2c5aa0;" onclick="selectColor(this)"></div>
+        <div class="color-option" data-color="#4a9575" style="background:#4a9575;" onclick="selectColor(this)"></div>
+        <div class="color-option" data-color="#d97706" style="background:#d97706;" onclick="selectColor(this)"></div>
+        <div class="color-option" data-color="#c53030" style="background:#c53030;" onclick="selectColor(this)"></div>
+        <div class="color-option" data-color="#7c3aed" style="background:#7c3aed;" onclick="selectColor(this)"></div>
+      </div>
     </div>
 
-    <button class="submit-btn" onclick="submitNewColumn()">إنشاء</button>
+    <button class="submit-btn" onclick="submitNewColumn()">إنشاء العمود</button>
   </div>
 </div>
 
@@ -693,13 +809,13 @@ body::before {
 <div class="modal-overlay" id="cardModal" onclick="closeModalBg(event)">
   <div class="modal-box" onclick="event.stopPropagation()">
     <div class="modal-header">
-      <h3 class="modal-title">✨ بطاقة جديدة</h3>
+      <h3 class="modal-title">+ مهمة جديدة</h3>
       <button class="modal-close" onclick="closeCardModal()">✕</button>
     </div>
 
     <div class="form-group">
-      <label class="form-label">العنوان</label>
-      <input type="text" class="form-input" id="cardTitle" placeholder="اكتب البطاقة...">
+      <label class="form-label">عنوان المهمة</label>
+      <input type="text" class="form-input" id="cardTitle" placeholder="اكتب عنوان المهمة...">
     </div>
 
     <div class="form-group">
@@ -707,7 +823,7 @@ body::before {
       <input type="date" class="form-input" id="cardDate">
     </div>
 
-    <button class="submit-btn" onclick="submitNewCard()">إضافة</button>
+    <button class="submit-btn" onclick="submitNewCard()">إضافة المهمة</button>
   </div>
 </div>
 
@@ -715,21 +831,60 @@ body::before {
 
 <script>
 const API = window.location.origin;
-const COLORS = [
-  '#2c5aa0', '#e74c3c', '#27ae60', '#f39c12', '#9b59b6', '#1abc9c'
-];
 let columns = [];
+let allCards = [];
 let currentColumnId = null;
-let selectedColor = '#2c5aa0';
+let selectedColor = '#1e3a5f';
 
 async function loadColumns() {
   try {
     const res = await fetch(API + '/kanban/columns');
     columns = await res.json();
+    
+    const cardsRes = await fetch(API + '/tasks');
+    allCards = await cardsRes.json();
+    
+    renderStats();
     renderBoard();
   } catch(e) {
     console.error('Error:', e);
   }
+}
+
+function renderStats() {
+  const stats = document.getElementById('statsGrid');
+  
+  const total = allCards.length;
+  const done = allCards.filter(c => c.done).length;
+  const pending = allCards.filter(c => !c.done).length;
+  const today = new Date().toISOString().split('T')[0];
+  const todayCount = allCards.filter(c => c.date === today).length;
+  
+  stats.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">📊 إجمالي المهام</div>
+      <div class="stat-value">${total}</div>
+      <div class="stat-change">${done} منجزة</div>
+    </div>
+    
+    <div class="stat-card">
+      <div class="stat-label">⏳ المهام المعلقة</div>
+      <div class="stat-value">${pending}</div>
+      <div class="stat-change">${Math.round((pending/total)*100)}% من الإجمالي</div>
+    </div>
+    
+    <div class="stat-card">
+      <div class="stat-label">✅ المهام المنجزة</div>
+      <div class="stat-value">${done}</div>
+      <div class="stat-change">${Math.round((done/total)*100)}% من الإجمالي</div>
+    </div>
+    
+    <div class="stat-card">
+      <div class="stat-label">📅 مهام اليوم</div>
+      <div class="stat-value">${todayCount}</div>
+      <div class="stat-change">${todayCount} تنتظر الإنجاز</div>
+    </div>
+  `;
 }
 
 function renderBoard() {
@@ -744,22 +899,34 @@ function renderBoard() {
           <div class="column-count">${col.cards?.length || 0}</div>
         </div>
         <div class="column-actions">
-          <button class="col-btn" onclick="openNewCardModal(${col.id})" title="بطاقة جديدة">+</button>
+          <button class="col-btn" onclick="openNewCardModal(${col.id})" title="مهمة جديدة">+</button>
           <button class="col-btn delete" onclick="deleteColumn(${col.id})" title="حذف">🗑</button>
         </div>
       </div>
 
       <div class="cards-area" data-column="${col.id}">
-        ${(col.cards || []).map(card => `
-          <div class="card" draggable="true" data-card-id="${card.id}" ondragstart="dragStart(event)" ondragend="dragEnd(event)">
+        ${(col.cards || []).length > 0 ? (col.cards || []).map(card => {
+          const today = new Date().toISOString().split('T')[0];
+          const isToday = card.date === today;
+          const isOverdue = card.date && new Date(card.date) < new Date() && !isToday && !card.done;
+          
+          return `
+          <div class="card ${card.done ? 'done' : ''} ${isOverdue ? 'overdue' : ''}" 
+            draggable="true" data-card-id="${card.id}" ondragstart="dragStart(event)" ondragend="dragEnd(event)">
             <div class="card-header">
               <div class="card-title">${card.title}</div>
               <button class="card-remove" onclick="deleteCard(${col.id}, ${card.id})">✕</button>
             </div>
-            ${card.date ? `<div class="card-meta"><div class="card-date">📅 ${card.date}</div></div>` : ''}
+            ${card.date ? `<div class="card-meta"><div class="card-date ${isToday ? 'today' : ''} ${isOverdue ? 'overdue' : ''}">📅 ${card.date}</div></div>` : ''}
           </div>
-        `).join('')}
-        <div class="add-btn" onclick="openNewCardModal(${col.id})">+ بطاقة جديدة</div>
+          `;
+        }).join('') : `
+          <div class="empty-state">
+            <div class="empty-state-icon">📭</div>
+            <div class="empty-state-text">لا توجد مهام</div>
+          </div>
+        `}
+        <div class="add-btn" onclick="openNewCardModal(${col.id})">+ إضافة مهمة</div>
       </div>
     </div>
   `).join('');
@@ -777,15 +944,9 @@ function renderBoard() {
 
 function openNewColumnModal() {
   document.getElementById('columnName').value = '';
-  selectedColor = '#2c5aa0';
-  
-  const picker = document.getElementById('colorPicker');
-  picker.innerHTML = COLORS.map((c, i) => `
-    <div class="color-option ${c === selectedColor ? 'selected' : ''}" 
-      data-color="${c}" style="background:${c};" 
-      onclick="selectColor(this)"></div>
-  `).join('');
-  
+  selectedColor = '#1e3a5f';
+  document.querySelectorAll('.color-option').forEach(el => el.classList.remove('selected'));
+  document.querySelector('[data-color="#1e3a5f"]').classList.add('selected');
   document.getElementById('columnModal').classList.add('show');
   document.getElementById('columnName').focus();
 }
@@ -859,20 +1020,22 @@ async function submitNewCard() {
     })
   });
 
-  toast('✅ تمت الإضافة');
+  toast('✅ تم إضافة المهمة');
   closeCardModal();
   loadColumns();
 }
 
 async function deleteCard(colId, cardId) {
-  if (!confirm('هل تريد حذف البطاقة؟')) return;
+  if (!confirm('حذف المهمة؟')) return;
   await fetch(API + `/kanban/cards/${cardId}`, {method:'DELETE'});
-  toast('🗑 حذف');
+  toast('🗑 تم الحذف');
   loadColumns();
 }
 
 function setupDragDrop() {
+  const cards = document.querySelectorAll('.card');
   const areas = document.querySelectorAll('.cards-area');
+
   areas.forEach(area => {
     area.addEventListener('dragover', dragOver);
     area.addEventListener('drop', dropCard);
