@@ -76,6 +76,21 @@ body {
   margin-top: 2px;
 }
 
+.header-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.time-display {
+  font-weight: 700;
+  color: var(--primary);
+  font-size: 14px;
+}
+
 .header-controls {
   display: flex;
   align-items: center;
@@ -111,6 +126,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
+  position: relative;
 }
 
 .btn-icon:hover {
@@ -549,6 +565,51 @@ body {
   margin-bottom: 12px;
 }
 
+/* Export Menu */
+.export-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  z-index: 100;
+  min-width: 200px;
+  display: none;
+  margin-top: 8px;
+}
+
+.export-menu.show {
+  display: block;
+}
+
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.3s;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: right;
+  font-family: 'Tajawal', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.export-option:hover {
+  background: var(--secondary);
+  color: var(--primary);
+}
+
+.export-icon {
+  font-size: 18px;
+}
+
 @media (max-width: 768px) {
   .header {
     padding: 16px 20px;
@@ -569,6 +630,10 @@ body {
   .stats-grid {
     grid-template-columns: 1fr;
   }
+
+  .header-center {
+    display: none;
+  }
 }
 </style>
 </head>
@@ -583,10 +648,32 @@ body {
     </div>
   </div>
 
+  <div class="header-center">
+    <div class="time-display" id="timeDisplay">--:-- </div>
+    <div id="dateDisplay">--/--/----</div>
+    <div id="dayDisplay">---</div>
+  </div>
+
   <input type="text" class="search-box" id="searchBox" placeholder="🔍 ابحث عن مهمة...">
 
   <div class="header-controls">
-    <button class="btn-icon" onclick="downloadReport()" title="تحميل تقرير">📥</button>
+    <div style="position: relative;">
+      <button class="btn-icon" id="exportBtn" onclick="toggleExportMenu()" title="تحميل">📥</button>
+      <div class="export-menu" id="exportMenu">
+        <button class="export-option" onclick="downloadExcel()">
+          <span class="export-icon">📊</span>
+          <span>تحميل Excel</span>
+        </button>
+        <button class="export-option" onclick="downloadCSV()">
+          <span class="export-icon">📄</span>
+          <span>تحميل CSV</span>
+        </button>
+        <button class="export-option" onclick="uploadGoogleDrive()">
+          <span class="export-icon">☁️</span>
+          <span>رفع Google Drive</span>
+        </button>
+      </div>
+    </div>
     <button class="btn-primary" onclick="openNewColumnModal()">+ عمود</button>
   </div>
 </div>
@@ -669,6 +756,35 @@ let currentCardId = null;
 let currentColumnId = null;
 let filterMode = { priority: 'all', status: 'all' };
 
+// ──────────────────────────────────────────────────────────────────────────────
+// UPDATE TIME FROM SERVER (توقيت الرياض)
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function updateRiyadhTime() {
+  try {
+    const res = await fetch(API + '/api/riyadh-time');
+    const data = await res.json();
+
+    document.getElementById('timeDisplay').textContent = data.time;
+    document.getElementById('dateDisplay').textContent = data.date;
+    document.getElementById('dayDisplay').textContent = data.dayName;
+
+    // Set min date to today
+    const today = data.date;
+    document.getElementById('cardDate').setAttribute('min', today);
+  } catch (e) {
+    console.error('Time error:', e);
+  }
+}
+
+// Update time every 10 seconds
+setInterval(updateRiyadhTime, 10000);
+updateRiyadhTime();
+
+// ──────────────────────────────────────────────────────────────────────────────
+// LOAD DATA
+// ──────────────────────────────────────────────────────────────────────────────
+
 async function loadData() {
   try {
     const [colRes, taskRes] = await Promise.all([
@@ -697,8 +813,8 @@ function renderStats() {
   const total = allCards.length;
   const done = allCards.filter(c => c.done).length;
   const pending = allCards.filter(c => !c.done).length;
-  const today = new Date().toISOString().split('T')[0];
-  const todayCount = allCards.filter(c => c.date === today).length;
+  const todayStr = document.getElementById('dateDisplay').textContent;
+  const todayCount = allCards.filter(c => c.date === todayStr).length;
   const high = allCards.filter(c => c.priority === 'high' && !c.done).length;
 
   stats.innerHTML = `
@@ -723,7 +839,7 @@ function renderStats() {
     <div class="stat-card">
       <div class="stat-label">📅 اليوم</div>
       <div class="stat-value">${todayCount}</div>
-      <div class="stat-change">${todayCount - allCards.filter(c => c.date === today && c.done).length} متبقية</div>
+      <div class="stat-change">${todayCount - allCards.filter(c => c.date === todayStr && c.done).length} متبقية</div>
     </div>
 
     <div class="stat-card">
@@ -819,6 +935,110 @@ function renderBoard() {
   board.innerHTML = html;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// EXPORT FUNCTIONS
+// ──────────────────────────────────────────────────────────────────────────────
+
+function toggleExportMenu() {
+  const menu = document.getElementById('exportMenu');
+  menu.classList.toggle('show');
+}
+
+// Close menu when clicking outside
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('exportMenu');
+  const btn = document.getElementById('exportBtn');
+  if (!menu.contains(e.target) && !btn.contains(e.target)) {
+    menu.classList.remove('show');
+  }
+});
+
+function downloadExcel() {
+  const filtered = getFilteredCards();
+  const date = document.getElementById('dateDisplay').textContent;
+
+  // Create CSV content
+  let csv = '\uFEFF'; // BOM for UTF-8
+  csv += 'العنوان,الوصف,الأولوية,التاريخ,الوقت,الحالة,المسؤول,التصنيفات\n';
+
+  filtered.forEach(task => {
+    const desc = (task.description || '').replace(/"/g, '""');
+    csv += `"${task.title}","${desc}","${task.priority || 'متوسطة'}","${task.date || ''}","${task.time || ''}","${task.done ? 'منجزة' : 'معلقة'}","${task.assignee || ''}","${task.tags || ''}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `المهام_${date}.xlsx`;
+  link.click();
+
+  toast('📊 تم تحميل ملف Excel');
+  document.getElementById('exportMenu').classList.remove('show');
+}
+
+function downloadCSV() {
+  const filtered = getFilteredCards();
+  const date = document.getElementById('dateDisplay').textContent;
+
+  let csv = '\uFEFF';
+  csv += 'العنوان,الوصف,الأولوية,التاريخ,الوقت,الحالة,المسؤول,التصنيفات\n';
+
+  filtered.forEach(task => {
+    const desc = (task.description || '').replace(/"/g, '""');
+    csv += `"${task.title}","${desc}","${task.priority || 'متوسطة'}","${task.date || ''}","${task.time || ''}","${task.done ? 'منجزة' : 'معلقة'}","${task.assignee || ''}","${task.tags || ''}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `المهام_${date}.csv`;
+  link.click();
+
+  toast('📄 تم تحميل ملف CSV');
+  document.getElementById('exportMenu').classList.remove('show');
+}
+
+async function uploadGoogleDrive() {
+  try {
+    const filtered = getFilteredCards();
+    
+    // تحضير البيانات
+    let csv = '\uFEFF';
+    csv += 'العنوان,الوصف,الأولوية,التاريخ,الوقت,الحالة,المسؤول,التصنيفات\n';
+
+    filtered.forEach(task => {
+      const desc = (task.description || '').replace(/"/g, '""');
+      csv += `"${task.title}","${desc}","${task.priority || 'متوسطة'}","${task.date || ''}","${task.time || ''}","${task.done ? 'منجزة' : 'معلقة'}","${task.assignee || ''}","${task.tags || ''}"\n`;
+    });
+
+    const date = document.getElementById('dateDisplay').textContent;
+
+    // إرسال إلى الخادم
+    const res = await fetch(API + '/export/google-drive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        filename: `المهام_${date}.csv`,
+        data: csv 
+      })
+    });
+
+    if (res.ok) {
+      toast('☁️ جاهز للرفع على Google Drive');
+      // في المستقبل: يمكن فتح Google Drive تلقائياً
+    }
+
+    document.getElementById('exportMenu').classList.remove('show');
+  } catch (e) {
+    toast('❌ خطأ في الرفع');
+    console.error(e);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FILTER FUNCTIONS
+// ──────────────────────────────────────────────────────────────────────────────
+
 function filterByPriority(priority) {
   filterMode.priority = priority;
   document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
@@ -833,6 +1053,10 @@ function filterByStatus(status) {
   renderBoard();
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// MODAL FUNCTIONS
+// ──────────────────────────────────────────────────────────────────────────────
+
 function openNewColumnModal() {
   const name = prompt('اسم العمود:');
   if (!name) return;
@@ -845,19 +1069,6 @@ function openNewColumnModal() {
     toast('✅ تم إنشاء العمود');
     loadData();
   });
-}
-
-function openNewCard(colId) {
-  currentColumnId = colId;
-  currentCardId = null;
-  document.getElementById('cardTitle').value = '';
-  document.getElementById('cardDesc').value = '';
-  document.getElementById('cardDate').value = '';
-  document.getElementById('cardTime').value = '';
-  document.getElementById('cardAssignee').value = '';
-  document.getElementById('cardTags').value = '';
-  document.getElementById('cardPriority').value = 'medium';
-  document.getElementById('cardModal').classList.add('show');
 }
 
 function editCard(id) {
@@ -937,23 +1148,6 @@ function closeModalIfBg(e) {
   }
 }
 
-function downloadReport() {
-  const filtered = getFilteredCards();
-  let csv = 'العنوان,الأولوية,التاريخ,الحالة,المسؤول\n';
-
-  filtered.forEach(card => {
-    csv += `"${card.title}","${card.priority || 'منخفضة'}","${card.date || ''}","${card.done ? 'منجزة' : 'معلقة'}","${card.assignee || ''}"\n`;
-  });
-
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `تقرير_المهام_${new Date().toISOString().split('T')[0]}.csv`;
-  a.click();
-  toast('📥 تم التحميل');
-}
-
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -961,10 +1155,12 @@ function toast(msg) {
   setTimeout(() => el.classList.remove('show'), 2500);
 }
 
+// Search
 document.getElementById('searchBox')?.addEventListener('input', () => {
   renderBoard();
 });
 
+// Load data
 loadData();
 setInterval(loadData, 30000);
 </script>
