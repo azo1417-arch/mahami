@@ -36,6 +36,29 @@ const VACATION_DAYS = [5]; // 5 = يوم الجمعة (0=الأحد، 5=الجم
 const PERSONAL_TAGS = ['شخصي', 'personal', 'عائلة', 'family', 'صحة', 'health'];
 
 // ──────────────────────────────────────────────────────────────────────────────
+// TIMEZONE - توقيت الرياض
+// ──────────────────────────────────────────────────────────────────────────────
+
+function getRiyadhDate() {
+  const options = { timeZone: 'Asia/Riyadh' };
+  return new Date(new Date().toLocaleString('en-US', options));
+}
+
+function getRiyadhDateStr() {
+  const d = getRiyadhDate();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function getRiyadhDay() {
+  return getRiyadhDate().getDay();
+}
+
+function getRiyadhTimeStr() {
+  const d = getRiyadhDate();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // INITIALIZATION
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -137,14 +160,8 @@ async function logActivity(taskId, action, oldVal, newVal) {
   }
 }
 
-function todayStr() {
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-
 function isVacationDay() {
-  const today = new Date();
-  return VACATION_DAYS.includes(today.getDay());
+  return VACATION_DAYS.includes(getRiyadhDay());
 }
 
 function isPersonalTask(task) {
@@ -153,6 +170,18 @@ function isPersonalTask(task) {
   
   const taskTags = task.tags.toLowerCase().split(',').map(t => t.trim());
   return taskTags.some(tag => PERSONAL_TAGS.some(pTag => tag.includes(pTag.toLowerCase())));
+}
+
+// Convert to Excel CSV
+function generateCSV(tasks) {
+  let csv = '\uFEFF'; // BOM for UTF-8
+  csv += 'العنوان,الوصف,الأولوية,التاريخ,الوقت,الحالة,المسؤول,التصنيفات\n';
+
+  tasks.forEach(task => {
+    csv += `"${task.title || ''}","${(task.description || '').replace(/"/g, '""')}","${task.priority || 'متوسطة'}","${task.date || ''}","${task.time || ''}","${task.done ? 'منجزة' : 'معلقة'}","${task.assignee || ''}","${task.tags || ''}"\n`;
+  });
+
+  return csv;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -188,7 +217,7 @@ app.post('/webhook', async (req, res) => {
 
 async function handleOwnerMessage(text, phone) {
   try {
-    // Add tasks - check if personal
+    // Add tasks
     if (text.startsWith('add ') || text.startsWith('اضف ')) {
       let tasksText = text.replace(/^(add|اضف)\s+/i, '').trim();
       const tasksList = tasksText.split(/[\n,;]/).map(t => t.trim()).filter(t => t.length > 2);
@@ -199,7 +228,7 @@ async function handleOwnerMessage(text, phone) {
         
         await pool.query(
           'INSERT INTO tasks (title, type, date, priority, is_personal) VALUES ($1, $2, $3, $4, $5)',
-          [title, 'task', todayStr(), 'medium', isPersonal]
+          [title, 'task', getRiyadhDateStr(), 'medium', isPersonal]
         );
         added++;
       }
@@ -212,7 +241,7 @@ async function handleOwnerMessage(text, phone) {
     if (text === 'مهام' || text === 'tasks') {
       const tasks = await pool.query(
         'SELECT * FROM tasks WHERE NOT done AND date = $1 LIMIT 10',
-        [todayStr()]
+        [getRiyadhDateStr()]
       );
 
       if (!tasks.rows.length) {
@@ -227,15 +256,6 @@ async function handleOwnerMessage(text, phone) {
       });
 
       await sendMsg(phone, msg);
-    }
-
-    // Mark as personal
-    if (text.startsWith('شخصي ') || text.startsWith('personal ')) {
-      const taskId = parseInt(text.replace(/^(شخصي|personal)\s+/i, ''));
-      if (!isNaN(taskId)) {
-        await pool.query('UPDATE tasks SET is_personal = true WHERE id = $1', [taskId]);
-        await sendMsg(phone, '🔒 تم تحديد المهمة كشخصية');
-      }
     }
   } catch (e) {
     console.error('Message error:', e);
@@ -259,7 +279,6 @@ app.post('/tasks', async (req, res) => {
   try {
     const { title, description, priority, date, time, assignee, tags, column_id } = req.body;
 
-    // تحقق إذا كانت المهمة شخصية
     const isPersonal = PERSONAL_TAGS.some(tag => 
       title.toLowerCase().includes(tag.toLowerCase()) || 
       tags?.toLowerCase().includes(tag.toLowerCase())
@@ -352,6 +371,53 @@ app.delete('/tasks/:id', async (req, res) => {
     await logActivity(req.params.id, 'DELETE', null, 'Task deleted');
     await pool.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// EXPORT ENDPOINTS
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.get('/export/csv', async (req, res) => {
+  try {
+    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
+    const csv = generateCSV(tasks.rows);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="المهام_${getRiyadhDateStr()}.csv"`);
+    res.send(csv);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/export/excel', async (req, res) => {
+  try {
+    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
+    const csv = generateCSV(tasks.rows);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="المهام_${getRiyadhDateStr()}.xlsx"`);
+    res.send(csv);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/export/google-drive', async (req, res) => {
+  try {
+    // هذا placeholder - يحتاج Google API setup
+    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
+    const csv = generateCSV(tasks.rows);
+
+    res.json({
+      success: true,
+      message: 'جاهز للرفع على Google Drive',
+      filename: `المهام_${getRiyadhDateStr()}.csv`,
+      data: csv
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -480,47 +546,18 @@ app.delete('/kanban/cards/:id', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// COMMENTS
+// API: Get current Riyadh time
 // ──────────────────────────────────────────────────────────────────────────────
 
-app.get('/tasks/:id/comments', async (req, res) => {
-  try {
-    const comments = await pool.query(
-      'SELECT * FROM comments WHERE task_id = $1 ORDER BY created_at DESC',
-      [req.params.id]
-    );
-    res.json(comments.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/tasks/:id/comments', async (req, res) => {
-  try {
-    const { author, text } = req.body;
-
-    const result = await pool.query(
-      'INSERT INTO comments (task_id, author, text) VALUES ($1, $2, $3) RETURNING *',
-      [req.params.id, author || 'مجهول', text]
-    );
-
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// ACTIVITY LOG
-// ──────────────────────────────────────────────────────────────────────────────
-
-app.get('/activity-log', async (req, res) => {
-  try {
-    const log = await pool.query('SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 50');
-    res.json(log.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+app.get('/api/riyadh-time', (req, res) => {
+  res.json({
+    date: getRiyadhDateStr(),
+    time: getRiyadhTimeStr(),
+    day: getRiyadhDay(),
+    dayName: ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'][getRiyadhDay()],
+    isVacation: isVacationDay(),
+    timestamp: getRiyadhDate().getTime()
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -528,11 +565,11 @@ app.get('/activity-log', async (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard_final.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_riyadh.html'));
 });
 
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard_final.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_riyadh.html'));
 });
 
 app.get('/kanban', (req, res) => {
@@ -540,44 +577,17 @@ app.get('/kanban', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), vacation: isVacationDay() });
+  res.json({ status: 'ok', timestamp: getRiyadhDateStr(), vacation: isVacationDay() });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// SCHEDULED TASKS
+// SCHEDULED TASKS (توقيت الرياض)
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Send reminder for PERSONAL tasks due today (NOT on vacation days)
-cron.schedule('0 9 * * *', async () => {
-  try {
-    // لا تبعت تذكيرات في أيام الإجازة
-    if (isVacationDay()) {
-      console.log('🎉 اليوم إجازة - لا تنبيهات دوام');
-      return;
-    }
-
-    const today = todayStr();
-    const tasks = await pool.query(
-      'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = false',
-      [today]
-    );
-
-    if (tasks.rows.length > 0) {
-      let msg = '📋 تذكير المهام:\n\n';
-      tasks.rows.forEach((t, i) => {
-        msg += `${i + 1}. ${t.title}\n`;
-      });
-      await sendMsg(OWNER, msg);
-    }
-  } catch (e) {
-    console.error('Cron error:', e);
-  }
-});
-
-// Send PERSONAL tasks reminder (يومي حتى في الإجازات لأنها شخصية)
+// Send reminder for PERSONAL tasks (8 AM Riyadh)
 cron.schedule('0 8 * * *', async () => {
   try {
-    const today = todayStr();
+    const today = getRiyadhDateStr();
     const personalTasks = await pool.query(
       'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = true',
       [today]
@@ -595,18 +605,43 @@ cron.schedule('0 8 * * *', async () => {
   }
 });
 
-// Send report every day (إلا الجمعة) - فقط عن المهام الشخصية يوم الجمعة
+// Send reminder for WORK tasks (9 AM Riyadh - NOT on vacation)
+cron.schedule('0 9 * * *', async () => {
+  try {
+    if (isVacationDay()) {
+      console.log('🎉 اليوم إجازة - لا تنبيهات دوام');
+      return;
+    }
+
+    const today = getRiyadhDateStr();
+    const tasks = await pool.query(
+      'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = false',
+      [today]
+    );
+
+    if (tasks.rows.length > 0) {
+      let msg = '📋 تذكير المهام:\n\n';
+      tasks.rows.forEach((t, i) => {
+        msg += `${i + 1}. ${t.title}\n`;
+      });
+      await sendMsg(OWNER, msg);
+    }
+  } catch (e) {
+    console.error('Cron error:', e);
+  }
+});
+
+// Send daily report (6 PM Riyadh)
 cron.schedule('0 18 * * *', async () => {
   try {
-    const week = new Date();
-    week.setDate(week.getDate() - 1);
-    const weekStr = week.toISOString().split('T')[0];
+    const yesterday = new Date(getRiyadhDate());
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
 
     if (isVacationDay()) {
-      // في يوم الجمعة: ملخص المهام الشخصية فقط
       const personalCompleted = await pool.query(
         'SELECT COUNT(*) as count FROM tasks WHERE done AND is_personal = true AND date >= $1',
-        [weekStr]
+        [yesterdayStr]
       );
 
       const personalPending = await pool.query(
@@ -620,10 +655,9 @@ cron.schedule('0 18 * * *', async () => {
 
       await sendMsg(OWNER, msg);
     } else {
-      // في الأيام العادية: ملخص الدوام فقط
       const completed = await pool.query(
         'SELECT COUNT(*) as count FROM tasks WHERE done AND is_personal = false AND date >= $1',
-        [weekStr]
+        [yesterdayStr]
       );
 
       const pending = await pool.query(
@@ -668,8 +702,9 @@ app.listen(PORT, () => {
 ║  🚀 Server running on port ${PORT}      ║
 ║  📊 Dashboard: /dashboard              ║
 ║  🎨 Kanban: /kanban                    ║
-║  🔒 تمييز المهام الشخصية تلقائياً      ║
-║  🎉 احترام أيام الإجازة               ║
+║  🕒 توقيت الرياض (UTC+3)              ║
+║  🔒 تمييز المهام الشخصية              ║
+║  📥 تصدير إلى Excel/Drive             ║
 ╚════════════════════════════════════════╝
   `);
 });
