@@ -4,7 +4,6 @@ const axios = require('axios');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const { google } = require('googleapis');
 const cron = require('node-cron');
 
 const app = express();
@@ -17,8 +16,8 @@ const limiter = rateLimit({
   max: 100,
   message: 'كثير الطلبات'
 });
+
 app.use('/webhook', limiter);
-app.use('/tasks', limiter);
 
 // DB pool
 const pool = new Pool({
@@ -31,8 +30,10 @@ const OWNER = process.env.OWNER_PHONE || '966557654321';
 const WIFE = process.env.WIFE_PHONE || '';
 const GREEN_TOKEN = process.env.GREEN_TOKEN || '';
 const INSTANCE_ID = process.env.INSTANCE_ID || '';
-const CLAUDE_KEY = process.env.CLAUDE_API_KEY || '';
-const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
+
+// أيام الإجازة والأسبوع
+const VACATION_DAYS = [5]; // 5 = يوم الجمعة (0=الأحد، 5=الجمعة)
+const PERSONAL_TAGS = ['شخصي', 'personal', 'عائلة', 'family', 'صحة', 'health'];
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INITIALIZATION
@@ -40,21 +41,26 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
 
 async function initDB() {
   try {
-    // Tasks table
+    // Tasks table with advanced fields
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
         id BIGSERIAL PRIMARY KEY,
         title TEXT NOT NULL,
+        description TEXT,
         type VARCHAR(20) DEFAULT 'task',
-        priority VARCHAR(10) DEFAULT 'normal',
+        priority VARCHAR(20) DEFAULT 'medium',
         date TEXT,
         time TEXT,
         done BOOLEAN DEFAULT FALSE,
         column_id BIGINT,
-        created_at TIMESTAMP DEFAULT NOW()
+        assignee TEXT,
+        tags TEXT,
+        is_personal BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
       )`);
 
-    // Kanban columns table
+    // Kanban columns
     await pool.query(`
       CREATE TABLE IF NOT EXISTS kanban_columns (
         id BIGSERIAL PRIMARY KEY,
@@ -63,17 +69,33 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT NOW()
       )`);
 
-    // Settings table
+    // Comments
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS comments (
+        id BIGSERIAL PRIMARY KEY,
+        task_id BIGINT NOT NULL,
+        author TEXT,
+        text TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )`);
+
+    // Activity log
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS activity_log (
+        id BIGSERIAL PRIMARY KEY,
+        task_id BIGINT,
+        action TEXT,
+        old_value TEXT,
+        new_value TEXT,
+        timestamp TIMESTAMP DEFAULT NOW()
+      )`);
+
+    // Settings
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
       )`);
-
-    // Insert default settings if not exist
-    await pool.query(
-      "INSERT INTO settings (key,value) VALUES ('busy_mode','false') ON CONFLICT (key) DO NOTHING"
-    );
 
     console.log('✅ Database initialized');
   } catch (e) {
@@ -87,16 +109,12 @@ initDB();
 // HELPER FUNCTIONS
 // ──────────────────────────────────────────────────────────────────────────────
 
-async function sendMsg(phone, text, type = 'text') {
+async function sendMsg(phone, text) {
   try {
     const data = {
       chatId: phone + '@c.us',
       message: text
     };
-
-    if (type === 'image') {
-      data.urlFile = text;
-    }
 
     await axios.post(
       `https://api.green-api.com/waInstance${INSTANCE_ID}/sendMessage/${GREEN_TOKEN}`,
@@ -108,40 +126,33 @@ async function sendMsg(phone, text, type = 'text') {
   }
 }
 
+async function logActivity(taskId, action, oldVal, newVal) {
+  try {
+    await pool.query(
+      'INSERT INTO activity_log (task_id, action, old_value, new_value) VALUES ($1, $2, $3, $4)',
+      [taskId, action, oldVal, newVal]
+    );
+  } catch (e) {
+    console.error('Log error:', e);
+  }
+}
+
 function todayStr() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-function fmt12(t) {
-  if (!t) return '';
-  const [h, m] = t.split(':');
-  const hour = h % 12 || 12;
-  const period = h < 12 ? 'ص' : 'م';
-  return `${hour}:${m} ${period}`;
+function isVacationDay() {
+  const today = new Date();
+  return VACATION_DAYS.includes(today.getDay());
 }
 
-// Parse multiple tasks from text
-function parseMultipleTasks(text) {
-  let tasks = [];
-
-  if (text.includes('\n')) {
-    tasks = text.split('\n')
-      .map(t => t.trim())
-      .filter(t => t.length > 0 && t.length < 200);
-  } else if (text.includes(';')) {
-    tasks = text.split(';')
-      .map(t => t.trim())
-      .filter(t => t.length > 0 && t.length < 200);
-  } else if (text.includes(',')) {
-    tasks = text.split(',')
-      .map(t => t.trim())
-      .filter(t => t.length > 0 && t.length < 200);
-  } else {
-    tasks = [text];
-  }
-
-  return tasks.filter(t => t && !t.match(/^\d+\s*\.\s*$/) && t.length > 2);
+function isPersonalTask(task) {
+  if (task.is_personal) return true;
+  if (!task.tags) return false;
+  
+  const taskTags = task.tags.toLowerCase().split(',').map(t => t.trim());
+  return taskTags.some(tag => PERSONAL_TAGS.some(pTag => tag.includes(pTag.toLowerCase())));
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -158,225 +169,76 @@ app.post('/webhook', async (req, res) => {
     const msg = body.body.messages[0];
     const senderPhone = msg.senderData?.senderPhone;
     const text = msg.textMessage?.toLowerCase().trim() || '';
-    const type = msg.typeMessage;
 
     if (!senderPhone || !text) return;
 
     const isOwner = senderPhone === OWNER;
     const isWife = senderPhone === WIFE;
 
-    // Handle voice messages
-    if (type === 'audioMessage' && msg.audioMessageData) {
-      const audioUrl = msg.audioMessageData.urlFile;
-      const transcript = await transcribeAudio(audioUrl);
-
-      if (transcript) {
-        await handleOwnerMessage(transcript, senderPhone);
-      }
-      return;
-    }
-
-    // Handle text messages
     if (isOwner) {
       await handleOwnerMessage(text, senderPhone);
     } else if (isWife) {
-      await handleWifeMessage(text, senderPhone);
-    } else {
-      await handleVisitorMessage(text, senderPhone);
+      await sendMsg(OWNER, `💬 من الزوجة:\n${text}`);
+      await sendMsg(senderPhone, '✅ تم التسجيل');
     }
   } catch (e) {
     console.error('Webhook error:', e);
   }
 });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// HANDLE OWNER MESSAGES
-// ──────────────────────────────────────────────────────────────────────────────
-
 async function handleOwnerMessage(text, phone) {
   try {
-    // Add multiple tasks
+    // Add tasks - check if personal
     if (text.startsWith('add ') || text.startsWith('اضف ')) {
       let tasksText = text.replace(/^(add|اضف)\s+/i, '').trim();
-
-      const tasksList = parseMultipleTasks(tasksText);
-
-      if (tasksList.length === 0) {
-        await sendMsg(phone, '❌ اكتب عنوان المهمة');
-        return;
-      }
+      const tasksList = tasksText.split(/[\n,;]/).map(t => t.trim()).filter(t => t.length > 2);
 
       let added = 0;
-      let duplicates = 0;
-      let failed = 0;
-
-      for (const taskTitle of tasksList) {
-        if (taskTitle.length < 3) {
-          failed++;
-          continue;
-        }
-
-        // Check for duplicates
-        const dup = await pool.query(
-          'SELECT id FROM tasks WHERE LOWER(title) = LOWER($1) AND NOT done',
-          [taskTitle]
+      for (const title of tasksList) {
+        const isPersonal = PERSONAL_TAGS.some(tag => title.toLowerCase().includes(tag.toLowerCase()));
+        
+        await pool.query(
+          'INSERT INTO tasks (title, type, date, priority, is_personal) VALUES ($1, $2, $3, $4, $5)',
+          [title, 'task', todayStr(), 'medium', isPersonal]
         );
-
-        if (dup.rows.length > 0) {
-          duplicates++;
-          continue;
-        }
-
-        try {
-          await pool.query(
-            'INSERT INTO tasks (title, type, date) VALUES ($1, $2, $3)',
-            [taskTitle, 'task', todayStr()]
-          );
-          added++;
-        } catch (e) {
-          failed++;
-        }
+        added++;
       }
 
-      let response = `✅ تم إضافة ${added}`;
-      if (duplicates > 0) response += ` | ⚠️ ${duplicates} مكررة`;
-      if (failed > 0) response += ` | ❌ ${failed} فشلت`;
-
-      await sendMsg(phone, response);
+      await sendMsg(phone, `✅ تم إضافة ${added} مهمة`);
       return;
     }
 
-    // Register meeting
-    if (text.includes('اجتماع') || text.includes('meeting')) {
-      let title = text.replace(/اجتماع|meeting/i, '').trim();
-      let time = '';
-
-      const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
-      if (timeMatch) {
-        time = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
-        title = title.replace(timeMatch[0], '').trim();
-      }
-
-      if (!title) {
-        await sendMsg(phone, '❌ اكتب اسم الاجتماع (مثل: اجتماع احمد 3:00 م)');
-        return;
-      }
-
-      // Check for duplicates
-      const dup = await pool.query(
-        `SELECT id FROM tasks 
-         WHERE type = 'meeting' 
-         AND LOWER(title) LIKE LOWER($1)
-         AND date = $2
-         AND time = $3
-         AND NOT done`,
-        ['%' + title + '%', todayStr(), time]
-      );
-
-      if (dup.rows.length > 0) {
-        await sendMsg(phone, '⚠️ الاجتماع مسجل بالفعل');
-        return;
-      }
-
-      await pool.query(
-        'INSERT INTO tasks (title, type, date, time) VALUES ($1, $2, $3, $4)',
-        [title, 'meeting', todayStr(), time]
-      );
-
-      const timeStr = time ? ` - ${fmt12(time)}` : '';
-      await sendMsg(phone, `✅ اجتماع: ${title}${timeStr}`);
-      return;
-    }
-
-    // Delete last task
-    if (text === 'حذف' || text === 'undo') {
-      const last = await pool.query(
-        'SELECT id, title FROM tasks ORDER BY created_at DESC LIMIT 1'
-      );
-
-      if (!last.rows.length) {
-        await sendMsg(phone, '❌ لا توجد مهام لحذفها');
-        return;
-      }
-
-      await pool.query('DELETE FROM tasks WHERE id = $1', [last.rows[0].id]);
-      await sendMsg(phone, `🗑 تم حذف: ${last.rows[0].title}`);
-      return;
-    }
-
-    // Show tasks
+    // List tasks
     if (text === 'مهام' || text === 'tasks') {
       const tasks = await pool.query(
-        `SELECT * FROM tasks 
-         WHERE NOT done 
-         AND date >= $1 
-         ORDER BY date ASC, time ASC 
-         LIMIT 10`,
+        'SELECT * FROM tasks WHERE NOT done AND date = $1 LIMIT 10',
         [todayStr()]
       );
 
       if (!tasks.rows.length) {
-        await sendMsg(phone, '✅ لا توجد مهام متبقية');
+        await sendMsg(phone, '✅ لا توجد مهام');
         return;
       }
 
-      let msg = '📋 *المهام*:\n\n';
+      let msg = '📋 المهام:\n\n';
       tasks.rows.forEach((t, i) => {
-        msg += `${i + 1}. *${t.title}*\n`;
-        if (t.date) msg += `   📅 ${t.date}`;
-        if (t.time) msg += ` ${fmt12(t.time)}`;
-        msg += '\n\n';
+        const tag = t.is_personal ? '🔒 ' : '📌 ';
+        msg += `${i + 1}. ${tag}${t.title}\n`;
       });
 
       await sendMsg(phone, msg);
-      return;
     }
 
-    // Default help message
-    await sendMsg(phone, '📝 أوامر: add/اضف، اجتماع، حذف، مهام');
-
+    // Mark as personal
+    if (text.startsWith('شخصي ') || text.startsWith('personal ')) {
+      const taskId = parseInt(text.replace(/^(شخصي|personal)\s+/i, ''));
+      if (!isNaN(taskId)) {
+        await pool.query('UPDATE tasks SET is_personal = true WHERE id = $1', [taskId]);
+        await sendMsg(phone, '🔒 تم تحديد المهمة كشخصية');
+      }
+    }
   } catch (e) {
-    console.error('Owner message error:', e);
-    await sendMsg(phone, '❌ خطأ: ' + e.message);
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// HANDLE WIFE MESSAGES
-// ──────────────────────────────────────────────────────────────────────────────
-
-async function handleWifeMessage(text, phone) {
-  try {
-    await sendMsg(OWNER, `💬 *من الزوجة*:\n${text}`);
-    await sendMsg(phone, '✅ تم التسجيل');
-  } catch (e) {
-    console.error('Wife message error:', e);
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// HANDLE VISITOR MESSAGES
-// ──────────────────────────────────────────────────────────────────────────────
-
-async function handleVisitorMessage(text, phone) {
-  try {
-    await sendMsg(phone, '👋 شكراً على التواصل. سيتم الرد عليك قريباً.');
-  } catch (e) {
-    console.error('Visitor message error:', e);
-  }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// TRANSCRIBE AUDIO (PLACEHOLDER)
-// ──────────────────────────────────────────────────────────────────────────────
-
-async function transcribeAudio(audioUrl) {
-  try {
-    // Placeholder - will be implemented with Whisper API
-    return null;
-  } catch (e) {
-    console.error('Transcribe error:', e);
-    return null;
+    console.error('Message error:', e);
   }
 }
 
@@ -386,9 +248,7 @@ async function transcribeAudio(audioUrl) {
 
 app.get('/tasks', async (req, res) => {
   try {
-    const tasks = await pool.query(
-      'SELECT * FROM tasks ORDER BY date DESC, time DESC'
-    );
+    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
     res.json(tasks.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -397,13 +257,20 @@ app.get('/tasks', async (req, res) => {
 
 app.post('/tasks', async (req, res) => {
   try {
-    const { title, type, priority, date, time, done, column_id } = req.body;
+    const { title, description, priority, date, time, assignee, tags, column_id } = req.body;
 
-    const result = await pool.query(
-      'INSERT INTO tasks (title, type, priority, date, time, done, column_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [title, type || 'task', priority || 'normal', date, time, done || false, column_id || null]
+    // تحقق إذا كانت المهمة شخصية
+    const isPersonal = PERSONAL_TAGS.some(tag => 
+      title.toLowerCase().includes(tag.toLowerCase()) || 
+      tags?.toLowerCase().includes(tag.toLowerCase())
     );
 
+    const result = await pool.query(
+      'INSERT INTO tasks (title, description, priority, date, time, assignee, tags, column_id, is_personal) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+      [title, description || null, priority || 'medium', date, time, assignee, tags, column_id || null, isPersonal]
+    );
+
+    await logActivity(result.rows[0].id, 'CREATE', null, `Task: ${title}`);
     res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -413,7 +280,7 @@ app.post('/tasks', async (req, res) => {
 app.patch('/tasks/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, done, priority, date, time, column_id } = req.body;
+    const { title, description, done, priority, date, time, assignee, tags, column_id, is_personal } = req.body;
 
     const updates = [];
     const values = [];
@@ -423,9 +290,14 @@ app.patch('/tasks/:id', async (req, res) => {
       updates.push(`title = $${paramCount++}`);
       values.push(title);
     }
+    if (description !== undefined) {
+      updates.push(`description = $${paramCount++}`);
+      values.push(description);
+    }
     if (done !== undefined) {
       updates.push(`done = $${paramCount++}`);
       values.push(done);
+      await logActivity(id, 'UPDATE', 'done', done ? 'true' : 'false');
     }
     if (priority !== undefined) {
       updates.push(`priority = $${paramCount++}`);
@@ -439,10 +311,24 @@ app.patch('/tasks/:id', async (req, res) => {
       updates.push(`time = $${paramCount++}`);
       values.push(time);
     }
+    if (assignee !== undefined) {
+      updates.push(`assignee = $${paramCount++}`);
+      values.push(assignee);
+    }
+    if (tags !== undefined) {
+      updates.push(`tags = $${paramCount++}`);
+      values.push(tags);
+    }
     if (column_id !== undefined) {
       updates.push(`column_id = $${paramCount++}`);
       values.push(column_id);
     }
+    if (is_personal !== undefined) {
+      updates.push(`is_personal = $${paramCount++}`);
+      values.push(is_personal);
+    }
+
+    updates.push(`updated_at = NOW()`);
 
     if (!updates.length) {
       return res.json({ error: 'nothing to update' });
@@ -463,6 +349,7 @@ app.patch('/tasks/:id', async (req, res) => {
 
 app.delete('/tasks/:id', async (req, res) => {
   try {
+    await logActivity(req.params.id, 'DELETE', null, 'Task deleted');
     await pool.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
@@ -478,20 +365,19 @@ app.get('/kanban/columns', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT c.id, c.name, c.color, c.created_at,
-             json_agg(json_build_object('id', t.id, 'title', t.title, 'date', t.date, 'done', t.done, 'time', t.time)) 
+             json_agg(json_build_object('id', t.id, 'title', t.title, 'date', t.date, 'done', t.done, 'priority', t.priority, 'assignee', t.assignee, 'is_personal', t.is_personal)) 
              FILTER (WHERE t.id IS NOT NULL) as cards
       FROM kanban_columns c
       LEFT JOIN tasks t ON t.column_id = c.id
       GROUP BY c.id, c.name, c.color, c.created_at
       ORDER BY c.created_at ASC
     `);
-    
-    // Format response - kanban_columns might return null cards, replace with empty array
+
     const formatted = result.rows.map(col => ({
       ...col,
       cards: col.cards || []
     }));
-    
+
     res.json(formatted);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -501,15 +387,13 @@ app.get('/kanban/columns', async (req, res) => {
 app.post('/kanban/columns', async (req, res) => {
   try {
     const { name, color } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
-    }
 
     const result = await pool.query(
       'INSERT INTO kanban_columns (name, color) VALUES ($1, $2) RETURNING *',
       [name, color || '#1e3a5f']
     );
+
+    await logActivity(null, 'CREATE_COLUMN', null, name);
     res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -518,34 +402,14 @@ app.post('/kanban/columns', async (req, res) => {
 
 app.patch('/kanban/columns/:id', async (req, res) => {
   try {
-    const { name, color } = req.body;
-    const { id } = req.params;
-
-    const updates = [];
-    const values = [];
-    let paramCount = 1;
-
-    if (name !== undefined) {
-      updates.push(`name = $${paramCount++}`);
-      values.push(name);
-    }
-    if (color !== undefined) {
-      updates.push(`color = $${paramCount++}`);
-      values.push(color);
-    }
-
-    if (!updates.length) {
-      return res.json({ error: 'nothing to update' });
-    }
-
-    values.push(id);
+    const { name } = req.body;
 
     const result = await pool.query(
-      `UPDATE kanban_columns SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
-      values
+      'UPDATE kanban_columns SET name = $1 WHERE id = $2 RETURNING *',
+      [name, req.params.id]
     );
 
-    res.json(result.rows[0] || { error: 'not found' });
+    res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -553,9 +417,7 @@ app.patch('/kanban/columns/:id', async (req, res) => {
 
 app.delete('/kanban/columns/:id', async (req, res) => {
   try {
-    // Delete associated tasks first
     await pool.query('DELETE FROM tasks WHERE column_id = $1', [req.params.id]);
-    // Then delete the column
     await pool.query('DELETE FROM kanban_columns WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
@@ -567,14 +429,11 @@ app.post('/kanban/cards', async (req, res) => {
   try {
     const { column_id, title, date, time } = req.body;
 
-    if (!column_id || !title) {
-      return res.status(400).json({ error: 'column_id and title are required' });
-    }
-
     const result = await pool.query(
       'INSERT INTO tasks (title, date, time, column_id, type) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [title, date || null, time || null, column_id, 'task']
     );
+
     res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -584,7 +443,6 @@ app.post('/kanban/cards', async (req, res) => {
 app.patch('/kanban/cards/:id', async (req, res) => {
   try {
     const { column_id, done } = req.body;
-    const { id } = req.params;
 
     const updates = [];
     const values = [];
@@ -599,18 +457,14 @@ app.patch('/kanban/cards/:id', async (req, res) => {
       values.push(done);
     }
 
-    if (!updates.length) {
-      return res.json({ error: 'nothing to update' });
-    }
-
-    values.push(id);
+    values.push(req.params.id);
 
     const result = await pool.query(
       `UPDATE tasks SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
       values
     );
 
-    res.json(result.rows[0] || { error: 'not found' });
+    res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -626,53 +480,176 @@ app.delete('/kanban/cards/:id', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// COMMENTS
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.get('/tasks/:id/comments', async (req, res) => {
+  try {
+    const comments = await pool.query(
+      'SELECT * FROM comments WHERE task_id = $1 ORDER BY created_at DESC',
+      [req.params.id]
+    );
+    res.json(comments.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/tasks/:id/comments', async (req, res) => {
+  try {
+    const { author, text } = req.body;
+
+    const result = await pool.query(
+      'INSERT INTO comments (task_id, author, text) VALUES ($1, $2, $3) RETURNING *',
+      [req.params.id, author || 'مجهول', text]
+    );
+
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// ACTIVITY LOG
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.get('/activity-log', async (req, res) => {
+  try {
+    const log = await pool.query('SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 50');
+    res.json(log.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // SERVE PAGES
 // ──────────────────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_advanced.html'));
 });
 
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_advanced.html'));
 });
 
 app.get('/kanban', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'kanban_professional.html'));
 });
 
-// Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), vacation: isVacationDay() });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// HTTPS REDIRECT (Production only)
+// SCHEDULED TASKS
 // ──────────────────────────────────────────────────────────────────────────────
 
-app.use((req, res, next) => {
-  if (process.env.NODE_ENV === 'production' && !req.secure && req.headers['x-forwarded-proto'] !== 'https') {
-    return res.redirect('https://' + req.headers.host + req.url);
+// Send reminder for PERSONAL tasks due today (NOT on vacation days)
+cron.schedule('0 9 * * *', async () => {
+  try {
+    // لا تبعت تذكيرات في أيام الإجازة
+    if (isVacationDay()) {
+      console.log('🎉 اليوم إجازة - لا تنبيهات دوام');
+      return;
+    }
+
+    const today = todayStr();
+    const tasks = await pool.query(
+      'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = false',
+      [today]
+    );
+
+    if (tasks.rows.length > 0) {
+      let msg = '📋 تذكير المهام:\n\n';
+      tasks.rows.forEach((t, i) => {
+        msg += `${i + 1}. ${t.title}\n`;
+      });
+      await sendMsg(OWNER, msg);
+    }
+  } catch (e) {
+    console.error('Cron error:', e);
   }
-  next();
+});
+
+// Send PERSONAL tasks reminder (يومي حتى في الإجازات لأنها شخصية)
+cron.schedule('0 8 * * *', async () => {
+  try {
+    const today = todayStr();
+    const personalTasks = await pool.query(
+      'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = true',
+      [today]
+    );
+
+    if (personalTasks.rows.length > 0) {
+      let msg = '🔒 المهام الشخصية:\n\n';
+      personalTasks.rows.forEach((t, i) => {
+        msg += `${i + 1}. ${t.title}\n`;
+      });
+      await sendMsg(OWNER, msg);
+    }
+  } catch (e) {
+    console.error('Personal tasks error:', e);
+  }
+});
+
+// Send report every day (إلا الجمعة) - فقط عن المهام الشخصية يوم الجمعة
+cron.schedule('0 18 * * *', async () => {
+  try {
+    const week = new Date();
+    week.setDate(week.getDate() - 1);
+    const weekStr = week.toISOString().split('T')[0];
+
+    if (isVacationDay()) {
+      // في يوم الجمعة: ملخص المهام الشخصية فقط
+      const personalCompleted = await pool.query(
+        'SELECT COUNT(*) as count FROM tasks WHERE done AND is_personal = true AND date >= $1',
+        [weekStr]
+      );
+
+      const personalPending = await pool.query(
+        'SELECT COUNT(*) as count FROM tasks WHERE NOT done AND is_personal = true'
+      );
+
+      let msg = `🔒 ملخص المهام الشخصية (الجمعة):\n`;
+      msg += `✅ المنجزة: ${personalCompleted.rows[0].count}\n`;
+      msg += `⏳ المعلقة: ${personalPending.rows[0].count}\n`;
+      msg += `\n🎉 يوم عطلة - استمتع به!`;
+
+      await sendMsg(OWNER, msg);
+    } else {
+      // في الأيام العادية: ملخص الدوام فقط
+      const completed = await pool.query(
+        'SELECT COUNT(*) as count FROM tasks WHERE done AND is_personal = false AND date >= $1',
+        [weekStr]
+      );
+
+      const pending = await pool.query(
+        'SELECT COUNT(*) as count FROM tasks WHERE NOT done AND is_personal = false'
+      );
+
+      let msg = `📊 ملخص يومك:\n`;
+      msg += `✅ منجزة: ${completed.rows[0].count}\n`;
+      msg += `⏳ معلقة: ${pending.rows[0].count}`;
+
+      await sendMsg(OWNER, msg);
+    }
+  } catch (e) {
+    console.error('Report error:', e);
+  }
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// SECURITY HEADERS
+// SECURITY & HEADERS
 // ──────────────────────────────────────────────────────────────────────────────
 
 app.use((req, res, next) => {
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Content-Security-Policy', "default-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; script-src 'self'");
   next();
 });
-
-// ──────────────────────────────────────────────────────────────────────────────
-// ERROR HANDLING
-// ──────────────────────────────────────────────────────────────────────────────
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
@@ -687,20 +664,12 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════╗
-║  ✅ Server running on port ${PORT}       ║
-║  📊 Dashboard: http://localhost:${PORT}  ║
-║  🎨 Kanban: http://localhost:${PORT}/kanban  ║
+║  ✅ مهامي - النسخة الذكية             ║
+║  🚀 Server running on port ${PORT}      ║
+║  📊 Dashboard: /dashboard              ║
+║  🎨 Kanban: /kanban                    ║
+║  🔒 تمييز المهام الشخصية تلقائياً      ║
+║  🎉 احترام أيام الإجازة               ║
 ╚════════════════════════════════════════╝
   `);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  process.exit(0);
 });
