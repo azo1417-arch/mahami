@@ -528,11 +528,11 @@ app.get('/activity-log', async (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard_advanced.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_final.html'));
 });
 
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard_advanced.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_final.html'));
 });
 
 app.get('/kanban', (req, res) => {
