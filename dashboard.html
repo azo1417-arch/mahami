@@ -33,716 +33,750 @@
   --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-* { margin:0; padding:0; box-sizing:border-box; }
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+}
 
 html, body {
-  width:100%;
-  height:100%;
+  width: 100%;
+  height: 100%;
 }
 
 body {
-  font-family:'Tajawal',sans-serif;
-  background:#fafbfc;
-  color:var(--text-primary);
-  min-height:100vh;
-  overflow-x:hidden;
+  font-family: 'Tajawal', sans-serif;
+  background: #fafbfc;
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
 }
 
 .header {
-  position:sticky;
-  top:0;
-  z-index:50;
-  padding:32px 48px;
-  background:#ffffff;
-  border-bottom:1px solid var(--border);
-  display:flex;
-  align-items:center;
-  gap:40px;
-  justify-content:space-between;
-  box-shadow:var(--shadow-sm);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  padding: 32px 48px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  justify-content: space-between;
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
 }
 
 .logo-brand {
-  display:flex;
-  align-items:center;
-  gap:20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
 }
 
 .logo-icon {
-  width:72px;
-  height:72px;
-  border-radius:16px;
-  background:linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:36px;
-  box-shadow:var(--shadow-md);
-  color:#ffffff;
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  box-shadow: var(--shadow-md);
+  color: #ffffff;
 }
 
 .logo-text h1 {
-  font-size:32px;
-  font-weight:800;
-  color:var(--primary);
-  font-family:'Lora',serif;
-  letter-spacing:-0.5px;
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: 'Lora', serif;
+  letter-spacing: -0.5px;
 }
 
 .logo-text p {
-  font-size:13px;
-  color:var(--text-secondary);
-  margin-top:4px;
-  font-weight:500;
-  letter-spacing:0.5px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
 }
 
 .header-controls {
-  display:flex;
-  align-items:center;
-  gap:16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .btn-primary {
-  background:linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-  border:none;
-  border-radius:10px;
-  padding:12px 28px;
-  color:white;
-  font-weight:700;
-  font-size:12px;
-  cursor:pointer;
-  transition:var(--transition);
-  box-shadow:var(--shadow-md);
-  text-transform:uppercase;
-  letter-spacing:0.5px;
-  font-family:'Tajawal',sans-serif;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+  border: none;
+  border-radius: 10px;
+  padding: 12px 28px;
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-md);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: 'Tajawal', sans-serif;
 }
 
 .btn-primary:hover {
-  transform:translateY(-2px);
-  box-shadow:var(--shadow-lg);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .container {
-  padding:40px 48px;
-  max-width:1600px;
-  margin:0 auto;
+  padding: 40px 48px;
+  max-width: 1600px;
+  margin: 0 auto;
 }
 
 .section-header {
-  margin-bottom:40px;
+  margin-bottom: 40px;
 }
 
 .section-title {
-  font-size:36px;
-  font-weight:900;
-  color:var(--text-primary);
-  font-family:'Lora',serif;
-  letter-spacing:-0.5px;
-  margin-bottom:8px;
+  font-size: 36px;
+  font-weight: 900;
+  color: var(--text-primary);
+  font-family: 'Lora', serif;
+  letter-spacing: -0.5px;
+  margin-bottom: 8px;
 }
 
 .section-subtitle {
-  font-size:13px;
-  color:var(--text-secondary);
-  text-transform:uppercase;
-  letter-spacing:0.5px;
-  font-weight:600;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
 }
 
 .stats-grid {
-  display:grid;
-  grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));
-  gap:24px;
-  margin-bottom:40px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+  margin-bottom: 40px;
 }
 
 .stat-card {
-  background:#ffffff;
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:28px;
-  box-shadow:var(--shadow-sm);
-  transition:var(--transition);
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition);
 }
 
 .stat-card:hover {
-  border-color:var(--primary);
-  box-shadow:var(--shadow-md);
-  transform:translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
 .stat-label {
-  font-size:12px;
-  color:var(--text-secondary);
-  text-transform:uppercase;
-  letter-spacing:0.5px;
-  font-weight:600;
-  margin-bottom:12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  margin-bottom: 12px;
 }
 
 .stat-value {
-  font-size:48px;
-  font-weight:800;
-  color:var(--primary);
-  font-family:'Lora',serif;
+  font-size: 48px;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: 'Lora', serif;
 }
 
 .stat-change {
-  font-size:12px;
-  color:var(--success);
-  margin-top:12px;
-  font-weight:600;
+  font-size: 12px;
+  color: var(--success);
+  margin-top: 12px;
+  font-weight: 600;
 }
 
 .stat-change.negative {
-  color:var(--danger);
+  color: var(--danger);
 }
 
 .board {
-  display:grid;
-  grid-template-columns:repeat(auto-fit, minmax(340px, 1fr));
-  gap:32px;
-  align-items:start;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 32px;
+  align-items: start;
 }
 
 .column {
-  display:flex;
-  flex-direction:column;
-  gap:16px;
-  position:relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
 }
 
 .column-header {
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding:20px;
-  background:#ffffff;
-  border-radius:12px;
-  border:1px solid var(--border);
-  transition:var(--transition);
-  box-shadow:var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
 }
 
 .column-header:hover {
-  border-color:var(--primary);
-  box-shadow:var(--shadow-md);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
 }
 
 .column-title {
-  display:flex;
-  align-items:center;
-  gap:12px;
-  flex:1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
 }
 
 .column-color {
-  width:18px;
-  height:18px;
-  border-radius:50%;
-  box-shadow:var(--shadow-sm);
-  cursor:pointer;
-  transition:var(--transition);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
 }
 
 .column-color:hover {
-  transform:scale(1.25);
+  transform: scale(1.25);
 }
 
 .column-name {
-  font-size:16px;
-  font-weight:700;
-  color:var(--text-primary);
-  flex:1;
-  cursor:text;
-  padding:6px 12px;
-  border-radius:6px;
-  transition:var(--transition);
-  font-family:'Lora',serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+  cursor: text;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: var(--transition);
+  font-family: 'Lora', serif;
+  min-width: 100px;
 }
 
 .column-name:hover {
-  background:var(--secondary);
+  background: var(--secondary);
 }
 
 .column-count {
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  width:36px;
-  height:36px;
-  background:var(--secondary);
-  border:1px solid var(--primary-light);
-  border-radius:6px;
-  font-size:12px;
-  font-weight:800;
-  color:var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--secondary);
+  border: 1px solid var(--primary-light);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--primary);
+  flex-shrink: 0;
 }
 
 .column-actions {
-  display:flex;
-  gap:6px;
-  opacity:0;
-  transition:var(--transition);
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: var(--transition);
+  flex-shrink: 0;
 }
 
 .column-header:hover .column-actions {
-  opacity:1;
+  opacity: 1;
 }
 
 .col-btn {
-  width:32px;
-  height:32px;
-  border-radius:6px;
-  border:1px solid var(--border);
-  background:var(--neutral-100);
-  color:var(--text-secondary);
-  cursor:pointer;
-  font-size:14px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  transition:var(--transition);
-  font-weight:700;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--neutral-100);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  font-weight: 700;
 }
 
 .col-btn:hover {
-  background:var(--secondary);
-  border-color:var(--primary);
-  color:var(--primary);
+  background: var(--secondary);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .col-btn.delete:hover {
-  background:#fee8e8;
-  color:var(--danger);
-  border-color:var(--danger);
+  background: #fee8e8;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .cards-area {
-  flex:1;
-  display:flex;
-  flex-direction:column;
-  gap:12px;
-  overflow-y:auto;
-  padding-right:4px;
-  min-height:400px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-right: 4px;
+  min-height: 400px;
 }
 
 .cards-area::-webkit-scrollbar {
-  width:6px;
+  width: 6px;
 }
 
 .cards-area::-webkit-scrollbar-track {
-  background:transparent;
+  background: transparent;
 }
 
 .cards-area::-webkit-scrollbar-thumb {
-  background:linear-gradient(180deg, var(--primary), var(--accent));
-  border-radius:3px;
+  background: linear-gradient(180deg, var(--primary), var(--accent));
+  border-radius: 3px;
 }
 
 .card {
-  background:#ffffff;
-  border:1.5px solid var(--border);
-  border-radius:10px;
-  padding:16px;
-  cursor:grab;
-  transition:var(--transition);
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  position:relative;
-  overflow:hidden;
-  box-shadow:var(--shadow-sm);
+  background: #ffffff;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  cursor: grab;
+  transition: var(--transition);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .card::before {
-  content:'';
-  position:absolute;
-  top:0;
-  left:0;
-  right:0;
-  height:3px;
-  background:var(--primary);
-  transform:scaleX(0);
-  transition:var(--transition);
-  transform-origin:right;
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--primary);
+  transform: scaleX(0);
+  transition: var(--transition);
+  transform-origin: right;
 }
 
 .card:hover {
-  border-color:var(--primary);
-  box-shadow:var(--shadow-md);
-  transform:translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
 .card:hover::before {
-  transform:scaleX(1);
+  transform: scaleX(1);
 }
 
 .card:active {
-  cursor:grabbing;
+  cursor: grabbing;
 }
 
 .card.done {
-  opacity:0.6;
-  background:var(--neutral-100);
+  opacity: 0.6;
+  background: var(--neutral-100);
 }
 
 .card.overdue {
-  border-left:4px solid var(--danger);
-  background:#fef6f6;
+  border-left: 4px solid var(--danger);
+  background: #fef6f6;
 }
 
 .card-header {
-  display:flex;
-  justify-content:space-between;
-  align-items:start;
-  gap:10px;
-  position:relative;
-  z-index:1;
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
 }
 
 .card-title {
-  font-size:14px;
-  font-weight:600;
-  color:var(--text-primary);
-  line-height:1.5;
-  flex:1;
-  transition:var(--transition);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.5;
+  flex: 1;
+  transition: var(--transition);
+  word-break: break-word;
 }
 
 .card.done .card-title {
-  text-decoration:line-through;
-  opacity:0.7;
+  text-decoration: line-through;
+  opacity: 0.7;
 }
 
 .card:hover .card-title {
-  color:var(--primary);
+  color: var(--primary);
 }
 
 .card-remove {
-  width:28px;
-  height:28px;
-  border-radius:6px;
-  border:1px solid var(--border);
-  background:var(--neutral-100);
-  color:var(--text-tertiary);
-  cursor:pointer;
-  font-size:13px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  transition:var(--transition);
-  flex-shrink:0;
-  opacity:0;
-  font-weight:700;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--neutral-100);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  flex-shrink: 0;
+  opacity: 0;
+  font-weight: 700;
 }
 
 .card:hover .card-remove {
-  opacity:1;
+  opacity: 1;
 }
 
 .card-remove:hover {
-  background:#fee8e8;
-  color:var(--danger);
-  border-color:var(--danger);
+  background: #fee8e8;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .card-meta {
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  font-size:11px;
-  color:var(--text-tertiary);
-  position:relative;
-  z-index:1;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  position: relative;
+  z-index: 1;
 }
 
 .card-date {
-  display:inline-flex;
-  align-items:center;
-  gap:4px;
-  background:var(--secondary);
-  padding:4px 10px;
-  border-radius:6px;
-  border:1px solid var(--primary-light);
-  color:var(--primary);
-  font-weight:600;
-  transition:var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--secondary);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--primary-light);
+  color: var(--primary);
+  font-weight: 600;
+  transition: var(--transition);
 }
 
 .card-date.overdue {
-  background:#fee8e8;
-  color:var(--danger);
-  border-color:var(--danger);
+  background: #fee8e8;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .card-date.today {
-  background:#e6f5f0;
-  color:var(--success);
-  border-color:var(--success);
+  background: #e6f5f0;
+  color: var(--success);
+  border-color: var(--success);
 }
 
 .add-btn {
-  background:var(--secondary);
-  border:1.5px dashed var(--primary);
-  border-radius:10px;
-  padding:14px;
-  color:var(--primary);
-  cursor:pointer;
-  font-weight:700;
-  font-size:12px;
-  transition:var(--transition);
-  text-align:center;
-  position:relative;
-  z-index:1;
-  font-family:'Tajawal',sans-serif;
+  background: var(--secondary);
+  border: 1.5px dashed var(--primary);
+  border-radius: 10px;
+  padding: 14px;
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+  transition: var(--transition);
+  text-align: center;
+  position: relative;
+  z-index: 1;
+  font-family: 'Tajawal', sans-serif;
 }
 
 .add-btn:hover {
-  background:var(--neutral-200);
-  border-color:var(--primary-light);
+  background: var(--neutral-200);
+  border-color: var(--primary-light);
 }
 
 .add-column {
-  flex-shrink:0;
-  width:360px;
-  height:fit-content;
-  background:#ffffff;
-  border:1.5px dashed var(--primary);
-  border-radius:12px;
-  padding:60px 24px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  gap:12px;
-  cursor:pointer;
-  transition:var(--transition);
-  box-shadow:var(--shadow-sm);
+  flex-shrink: 0;
+  width: 360px;
+  height: fit-content;
+  background: #ffffff;
+  border: 1.5px dashed var(--primary);
+  border-radius: 12px;
+  padding: 60px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
 }
 
 .add-column:hover {
-  border-color:var(--primary-light);
-  background:var(--secondary);
-  box-shadow:var(--shadow-md);
-  transform:translateY(-2px);
+  border-color: var(--primary-light);
+  background: var(--secondary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
 .add-column-icon {
-  font-size:40px;
-  color:var(--primary);
+  font-size: 40px;
+  color: var(--primary);
 }
 
 .add-column-text {
-  font-size:13px;
-  font-weight:700;
-  color:var(--primary);
-  text-align:center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  text-align: center;
 }
 
 .modal-overlay {
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,0.25);
-  backdrop-filter:blur(4px);
-  z-index:100;
-  display:none;
-  align-items:center;
-  justify-content:center;
-  padding:20px;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
 }
 
 .modal-overlay.show {
-  display:flex;
-  animation:fadeIn .2s ease;
+  display: flex;
+  animation: fadeIn 0.2s ease;
 }
 
 @keyframes fadeIn {
-  from { opacity:0; }
-  to { opacity:1; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .modal-box {
-  background:#ffffff;
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:40px;
-  width:100%;
-  max-width:500px;
-  box-shadow:var(--shadow-lg);
-  position:relative;
-  overflow:hidden;
-  animation:modalIn .3s ease;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 40px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+  animation: modalIn 0.3s ease;
 }
 
 @keyframes modalIn {
-  from { opacity:0; transform:scale(0.95) translateY(-20px); }
-  to { opacity:1; transform:scale(1) translateY(0); }
+  from { opacity: 0; transform: scale(0.95) translateY(-20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .modal-header {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 28px;
 }
 
 .modal-title {
-  font-size:26px;
-  font-weight:800;
-  color:var(--primary);
-  font-family:'Lora',serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: 'Lora', serif;
 }
 
 .modal-close {
-  width:40px;
-  height:40px;
-  border-radius:8px;
-  border:1px solid var(--border);
-  background:var(--neutral-100);
-  color:var(--primary);
-  cursor:pointer;
-  font-size:20px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  transition:var(--transition);
-  font-weight:700;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--neutral-100);
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  font-weight: 700;
 }
 
 .modal-close:hover {
-  background:var(--secondary);
-  border-color:var(--primary);
-  transform:rotate(90deg);
+  background: var(--secondary);
+  border-color: var(--primary);
+  transform: rotate(90deg);
 }
 
 .form-group {
-  margin-bottom:20px;
+  margin-bottom: 20px;
 }
 
 .form-label {
-  display:block;
-  font-size:11px;
-  font-weight:800;
-  color:var(--primary);
-  margin-bottom:8px;
-  text-transform:uppercase;
-  letter-spacing:0.5px;
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--primary);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .form-input, .form-select {
-  width:100%;
-  background:var(--neutral-100);
-  border:1px solid var(--border);
-  border-radius:8px;
-  padding:12px 14px;
-  color:var(--text-primary);
-  font-family:'Tajawal',sans-serif;
-  font-size:13px;
-  outline:none;
-  transition:var(--transition);
-  direction:rtl;
+  width: 100%;
+  background: var(--neutral-100);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: var(--text-primary);
+  font-family: 'Tajawal', sans-serif;
+  font-size: 13px;
+  outline: none;
+  transition: var(--transition);
+  direction: rtl;
 }
 
 .form-input:focus, .form-select:focus {
-  background:#ffffff;
-  border-color:var(--primary);
-  box-shadow:0 0 0 3px rgba(30,58,95,0.1);
+  background: #ffffff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.1);
 }
 
 .color-picker {
-  display:grid;
-  grid-template-columns:repeat(6, 1fr);
-  gap:12px;
-  margin-bottom:20px;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .color-option {
-  width:50px;
-  height:50px;
-  border-radius:8px;
-  cursor:pointer;
-  border:3px solid transparent;
-  transition:var(--transition);
-  box-shadow:var(--shadow-sm);
+  width: 50px;
+  height: 50px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 3px solid transparent;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
 }
 
 .color-option:hover {
-  transform:scale(1.1);
+  transform: scale(1.1);
 }
 
 .color-option.selected {
-  border-color:var(--primary);
-  box-shadow:var(--shadow-md);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
 }
 
 .submit-btn {
-  width:100%;
-  background:linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-  border:none;
-  border-radius:8px;
-  padding:14px;
-  color:white;
-  font-family:'Tajawal',sans-serif;
-  font-size:13px;
-  font-weight:800;
-  cursor:pointer;
-  transition:var(--transition);
-  box-shadow:var(--shadow-md);
-  text-transform:uppercase;
-  letter-spacing:0.5px;
+  width: 100%;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+  border: none;
+  border-radius: 8px;
+  padding: 14px;
+  color: white;
+  font-family: 'Tajawal', sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-md);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .submit-btn:hover {
-  transform:translateY(-2px);
-  box-shadow:var(--shadow-lg);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .toast {
-  position:fixed;
-  bottom:40px;
-  right:40px;
-  background:#ffffff;
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:16px 24px;
-  color:var(--primary);
-  font-size:13px;
-  z-index:200;
-  box-shadow:var(--shadow-lg);
-  display:none;
-  align-items:center;
-  gap:10px;
-  animation:toastSlide .3s ease;
-  font-weight:600;
+  position: fixed;
+  bottom: 40px;
+  right: 40px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 24px;
+  color: var(--primary);
+  font-size: 13px;
+  z-index: 200;
+  box-shadow: var(--shadow-lg);
+  display: none;
+  align-items: center;
+  gap: 10px;
+  animation: toastSlide 0.3s ease;
+  font-weight: 600;
 }
 
 @keyframes toastSlide {
-  from { opacity:0; transform:translateX(40px) translateY(40px); }
-  to { opacity:1; transform:translateX(0) translateY(0); }
+  from { opacity: 0; transform: translateX(40px) translateY(40px); }
+  to { opacity: 1; transform: translateX(0) translateY(0); }
 }
 
 .toast.show {
-  display:flex;
+  display: flex;
 }
 
 .empty-state {
-  text-align:center;
-  padding:30px 15px;
-  color:var(--text-tertiary);
+  text-align: center;
+  padding: 30px 15px;
+  color: var(--text-tertiary);
 }
 
 .empty-state-icon {
-  font-size:40px;
-  margin-bottom:12px;
+  font-size: 40px;
+  margin-bottom: 12px;
 }
 
 .empty-state-text {
-  font-size:13px;
-  color:var(--text-secondary);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+  .header {
+    padding: 20px 24px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .container {
+    padding: 20px 24px;
+  }
+
+  .section-title {
+    font-size: 24px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .board {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 </head>
@@ -839,15 +873,18 @@ let selectedColor = '#1e3a5f';
 async function loadColumns() {
   try {
     const res = await fetch(API + '/kanban/columns');
+    if (!res.ok) throw new Error('Failed to load columns');
     columns = await res.json();
     
     const cardsRes = await fetch(API + '/tasks');
+    if (!cardsRes.ok) throw new Error('Failed to load tasks');
     allCards = await cardsRes.json();
     
     renderStats();
     renderBoard();
   } catch(e) {
     console.error('Error:', e);
+    toast('❌ خطأ في تحميل البيانات');
   }
 }
 
@@ -859,6 +896,8 @@ function renderStats() {
   const pending = allCards.filter(c => !c.done).length;
   const today = new Date().toISOString().split('T')[0];
   const todayCount = allCards.filter(c => c.date === today).length;
+  const donePercent = total > 0 ? Math.round((done / total) * 100) : 0;
+  const pendingPercent = total > 0 ? Math.round((pending / total) * 100) : 0;
   
   stats.innerHTML = `
     <div class="stat-card">
@@ -870,13 +909,13 @@ function renderStats() {
     <div class="stat-card">
       <div class="stat-label">⏳ المهام المعلقة</div>
       <div class="stat-value">${pending}</div>
-      <div class="stat-change">${Math.round((pending/total)*100)}% من الإجمالي</div>
+      <div class="stat-change">${pendingPercent}% من الإجمالي</div>
     </div>
     
     <div class="stat-card">
       <div class="stat-label">✅ المهام المنجزة</div>
       <div class="stat-value">${done}</div>
-      <div class="stat-change">${Math.round((done/total)*100)}% من الإجمالي</div>
+      <div class="stat-change">${donePercent}% من الإجمالي</div>
     </div>
     
     <div class="stat-card">
@@ -890,13 +929,27 @@ function renderStats() {
 function renderBoard() {
   const board = document.getElementById('board');
   
-  let html = columns.map(col => `
+  if (!columns || columns.length === 0) {
+    board.innerHTML = `
+      <div class="empty-state" style="grid-column: 1/-1; padding: 60px 20px;">
+        <div class="empty-state-icon">📭</div>
+        <div class="empty-state-text">لا توجد أعمدة حتى الآن</div>
+        <button class="btn-primary" onclick="openNewColumnModal()" style="margin-top: 20px;">+ إنشاء عمود</button>
+      </div>
+    `;
+    return;
+  }
+  
+  let html = columns.map(col => {
+    const cardCount = (col.cards || []).length;
+    
+    return `
     <div class="column" data-id="${col.id}">
       <div class="column-header">
         <div class="column-title">
-          <div class="column-color" style="background:${col.color}"></div>
-          <div class="column-name" contenteditable="true" onblur="updateColumnName(${col.id}, this.textContent)">${col.name}</div>
-          <div class="column-count">${col.cards?.length || 0}</div>
+          <div class="column-color" style="background:${col.color || '#1e3a5f'}"></div>
+          <div class="column-name" contenteditable="true" onblur="updateColumnName(${col.id}, this.textContent)">${col.name || 'عمود جديد'}</div>
+          <div class="column-count">${cardCount}</div>
         </div>
         <div class="column-actions">
           <button class="col-btn" onclick="openNewCardModal(${col.id})" title="مهمة جديدة">+</button>
@@ -914,8 +967,8 @@ function renderBoard() {
           <div class="card ${card.done ? 'done' : ''} ${isOverdue ? 'overdue' : ''}" 
             draggable="true" data-card-id="${card.id}" ondragstart="dragStart(event)" ondragend="dragEnd(event)">
             <div class="card-header">
-              <div class="card-title">${card.title}</div>
-              <button class="card-remove" onclick="deleteCard(${col.id}, ${card.id})">✕</button>
+              <div class="card-title">${card.title || 'مهمة بدون عنوان'}</div>
+              <button class="card-remove" onclick="deleteCard(${col.id}, ${card.id})" title="حذف">✕</button>
             </div>
             ${card.date ? `<div class="card-meta"><div class="card-date ${isToday ? 'today' : ''} ${isOverdue ? 'overdue' : ''}">📅 ${card.date}</div></div>` : ''}
           </div>
@@ -929,7 +982,7 @@ function renderBoard() {
         <div class="add-btn" onclick="openNewCardModal(${col.id})">+ إضافة مهمة</div>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   html += `
     <div class="add-column" onclick="openNewColumnModal()">
@@ -946,9 +999,11 @@ function openNewColumnModal() {
   document.getElementById('columnName').value = '';
   selectedColor = '#1e3a5f';
   document.querySelectorAll('.color-option').forEach(el => el.classList.remove('selected'));
-  document.querySelector('[data-color="#1e3a5f"]').classList.add('selected');
+  const defaultColor = document.querySelector('[data-color="#1e3a5f"]');
+  if (defaultColor) defaultColor.classList.add('selected');
   document.getElementById('columnModal').classList.add('show');
-  document.getElementById('columnName').focus();
+  const input = document.getElementById('columnName');
+  if (input) setTimeout(() => input.focus(), 100);
 }
 
 function closeColumnModal() {
@@ -963,35 +1018,56 @@ function selectColor(el) {
 
 async function submitNewColumn() {
   const name = document.getElementById('columnName').value.trim();
-  if (!name) return;
+  if (!name) {
+    toast('❌ اكتب اسم العمود');
+    return;
+  }
 
-  await fetch(API + '/kanban/columns', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name, color:selectedColor})
-  });
-
-  toast('✅ تم إنشاء العمود');
-  closeColumnModal();
-  loadColumns();
+  try {
+    const res = await fetch(API + '/kanban/columns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color: selectedColor })
+    });
+    
+    if (!res.ok) throw new Error('Failed to create column');
+    
+    toast('✅ تم إنشاء العمود');
+    closeColumnModal();
+    loadColumns();
+  } catch(e) {
+    toast('❌ خطأ في إنشاء العمود');
+    console.error(e);
+  }
 }
 
 async function updateColumnName(id, name) {
   name = name.trim();
   if (!name) return;
   
-  await fetch(API + `/kanban/columns/${id}`, {
-    method:'PATCH',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name})
-  });
+  try {
+    await fetch(API + `/kanban/columns/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+  } catch(e) {
+    console.error('Error updating column:', e);
+  }
 }
 
 async function deleteColumn(id) {
   if (!confirm('هل تريد حذف العمود؟')) return;
-  await fetch(API + `/kanban/columns/${id}`, {method:'DELETE'});
-  toast('🗑 تم الحذف');
-  loadColumns();
+  
+  try {
+    const res = await fetch(API + `/kanban/columns/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete column');
+    toast('🗑 تم الحذف');
+    loadColumns();
+  } catch(e) {
+    toast('❌ خطأ في الحذف');
+    console.error(e);
+  }
 }
 
 function openNewCardModal(colId) {
@@ -999,7 +1075,8 @@ function openNewCardModal(colId) {
   document.getElementById('cardTitle').value = '';
   document.getElementById('cardDate').value = '';
   document.getElementById('cardModal').classList.add('show');
-  document.getElementById('cardTitle').focus();
+  const input = document.getElementById('cardTitle');
+  if (input) setTimeout(() => input.focus(), 100);
 }
 
 function closeCardModal() {
@@ -1008,34 +1085,53 @@ function closeCardModal() {
 
 async function submitNewCard() {
   const title = document.getElementById('cardTitle').value.trim();
-  if (!title || !currentColumnId) return;
+  if (!title) {
+    toast('❌ اكتب عنوان المهمة');
+    return;
+  }
+  if (!currentColumnId) {
+    toast('❌ اختر عمود');
+    return;
+  }
 
-  await fetch(API + `/kanban/cards`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      column_id:currentColumnId,
-      title,
-      date:document.getElementById('cardDate').value
-    })
-  });
-
-  toast('✅ تم إضافة المهمة');
-  closeCardModal();
-  loadColumns();
+  try {
+    const res = await fetch(API + `/kanban/cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        column_id: currentColumnId,
+        title,
+        date: document.getElementById('cardDate').value || null
+      })
+    });
+    
+    if (!res.ok) throw new Error('Failed to create card');
+    
+    toast('✅ تم إضافة المهمة');
+    closeCardModal();
+    loadColumns();
+  } catch(e) {
+    toast('❌ خطأ في إضافة المهمة');
+    console.error(e);
+  }
 }
 
 async function deleteCard(colId, cardId) {
   if (!confirm('حذف المهمة؟')) return;
-  await fetch(API + `/kanban/cards/${cardId}`, {method:'DELETE'});
-  toast('🗑 تم الحذف');
-  loadColumns();
+  
+  try {
+    const res = await fetch(API + `/kanban/cards/${cardId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete card');
+    toast('🗑 تم الحذف');
+    loadColumns();
+  } catch(e) {
+    toast('❌ خطأ في الحذف');
+    console.error(e);
+  }
 }
 
 function setupDragDrop() {
-  const cards = document.querySelectorAll('.card');
   const areas = document.querySelectorAll('.cards-area');
-
   areas.forEach(area => {
     area.addEventListener('dragover', dragOver);
     area.addEventListener('drop', dropCard);
@@ -1046,7 +1142,7 @@ let draggedCard = null;
 
 function dragStart(e) {
   draggedCard = e.target.closest('.card');
-  draggedCard.style.opacity = '0.5';
+  if (draggedCard) draggedCard.style.opacity = '0.5';
 }
 
 function dragEnd(e) {
@@ -1067,10 +1163,15 @@ function dropCard(e) {
   const cardId = parseInt(draggedCard.getAttribute('data-card-id'));
 
   fetch(API + `/kanban/cards/${cardId}`, {
-    method:'PATCH',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({column_id:newColId})
-  }).then(() => loadColumns());
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ column_id: newColId })
+  }).then(() => {
+    loadColumns();
+  }).catch(e => {
+    console.error('Error moving card:', e);
+    toast('❌ خطأ في نقل المهمة');
+  });
 }
 
 function closeModalBg(e) {
@@ -1082,12 +1183,18 @@ function closeModalBg(e) {
 
 function toast(msg) {
   const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3000);
+  if (el) {
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 3000);
+  }
 }
 
+// Load on page load
 loadColumns();
+
+// Refresh every 30 seconds
+setInterval(loadColumns, 30000);
 </script>
 </body>
 </html>
