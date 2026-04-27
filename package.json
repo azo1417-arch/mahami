@@ -1,12 +1,21 @@
 {
   "name": "mahami",
-  "version": "2.0.0",
-  "description": "WhatsApp Task Manager Bot",
+  "version": "3.0.0",
+  "description": "مهامي - نظام إدارة المهام الذكي",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
+  "keywords": [
+    "tasks",
+    "management",
+    "kanban",
+    "whatsapp",
+    "saudi"
+  ],
+  "author": "عبدالعزيز",
+  "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
@@ -14,12 +23,14 @@
     "node-cron": "^3.0.2",
     "axios": "^1.6.5",
     "dotenv": "^16.3.1",
-    "googleapis": "^118.0.0"
+    "googleapis": "^118.0.0",
+    "form-data": "^4.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
 }
