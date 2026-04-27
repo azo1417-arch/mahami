@@ -428,11 +428,11 @@ app.get('/api/riyadh-time', (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_riyadh.html'));
 });
 
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  res.sendFile(path.join(__dirname, 'public', 'dashboard_riyadh.html'));
 });
 
 app.get('/kanban', (req, res) => {
