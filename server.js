@@ -408,7 +408,6 @@ app.get('/export/excel', async (req, res) => {
 
 app.post('/export/google-drive', async (req, res) => {
   try {
-    // هذا placeholder - يحتاج Google API setup
     const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
     const csv = generateCSV(tasks.rows);
 
