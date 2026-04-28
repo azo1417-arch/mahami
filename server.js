@@ -4,7 +4,8 @@ const axios = require('axios');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const cron = require('node-cron');
+const { google } = require('googleapis');
+const FormData = require('form-data');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -16,8 +17,8 @@ const limiter = rateLimit({
   max: 100,
   message: 'كثير الطلبات'
 });
-
 app.use('/webhook', limiter);
+app.use('/tasks', limiter);
 
 // DB pool
 const pool = new Pool({
@@ -28,105 +29,76 @@ const pool = new Pool({
 // Globals
 const OWNER = process.env.OWNER_PHONE || '966557654321';
 const WIFE = process.env.WIFE_PHONE || '';
+const ADMIN_CHAT = process.env.ADMIN_CHAT || '';
 const GREEN_TOKEN = process.env.GREEN_TOKEN || '';
 const INSTANCE_ID = process.env.INSTANCE_ID || '';
-
-const VACATION_DAYS = [5];
-const PERSONAL_TAGS = ['شخصي', 'personal', 'عائلة', 'family', 'صحة', 'health'];
-
-// ──────────────────────────────────────────────────────────────────────────────
-// TIMEZONE - توقيت الرياض
-// ──────────────────────────────────────────────────────────────────────────────
-
-function getRiyadhDate() {
-  const options = { timeZone: 'Asia/Riyadh' };
-  return new Date(new Date().toLocaleString('en-US', options));
-}
-
-function getRiyadhDateStr() {
-  const d = getRiyadhDate();
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-
-function getRiyadhDay() {
-  return getRiyadhDate().getDay();
-}
-
-function getRiyadhTimeStr() {
-  const d = getRiyadhDate();
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-}
+const CLAUDE_KEY = process.env.CLAUDE_API_KEY || '';
+const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INITIALIZATION
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function initDB() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id BIGSERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        description TEXT,
-        type VARCHAR(20) DEFAULT 'task',
-        priority VARCHAR(20) DEFAULT 'medium',
-        date TEXT,
-        time TEXT,
-        done BOOLEAN DEFAULT FALSE,
-        column_id BIGINT,
-        assignee TEXT,
-        tags TEXT,
-        is_personal BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )`);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS kanban_columns (
-        id BIGSERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        color VARCHAR(20) DEFAULT '#1e3a5f',
-        created_at TIMESTAMP DEFAULT NOW()
-      )`);
-
-    console.log('✅ Database initialized');
-  } catch (e) {
-    console.error('❌ DB Init Error:', e.message);
-  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id BIGSERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      type VARCHAR(20) DEFAULT 'task',
+      priority VARCHAR(10) DEFAULT 'normal',
+      date TEXT,
+      time TEXT,
+      done BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
+  
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )`);
+  
+  await pool.query(
+    "INSERT INTO settings (key,value) VALUES ('busy_mode','false') ON CONFLICT (key) DO NOTHING"
+  );
 }
 
-initDB();
+initDB().catch(console.error);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // HELPER FUNCTIONS
 // ──────────────────────────────────────────────────────────────────────────────
 
-async function sendMsg(phone, text) {
+async function sendMsg(phone, text, type = 'text') {
   try {
     const data = {
       chatId: phone + '@c.us',
       message: text
     };
-
+    
+    if (type === 'image') {
+      data.urlFile = text;
+    }
+    
     await axios.post(
       `https://api.green-api.com/waInstance${INSTANCE_ID}/sendMessage/${GREEN_TOKEN}`,
-      data,
-      { timeout: 5000 }
+      data
     );
   } catch (e) {
     console.error('Send error:', e.message);
   }
 }
 
-function generateCSV(tasks) {
-  let csv = '\uFEFF';
-  csv += 'العنوان,الوصف,الأولوية,التاريخ,الوقت,الحالة,المسؤول,التصنيفات\n';
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
 
-  tasks.forEach(task => {
-    csv += `"${task.title || ''}","${(task.description || '').replace(/"/g, '""')}","${task.priority || 'متوسطة'}","${task.date || ''}","${task.time || ''}","${task.done ? 'منجزة' : 'معلقة'}","${task.assignee || ''}","${task.tags || ''}"\n`;
-  });
-
-  return csv;
+function fmt12(t) {
+  const [h, m] = t.split(':');
+  const hour = h % 12 || 12;
+  const period = h < 12 ? 'ص' : 'م';
+  return `${hour}:${m} ${period}`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -135,7 +107,7 @@ function generateCSV(tasks) {
 
 app.post('/webhook', async (req, res) => {
   res.status(200).send('ok');
-
+  
   try {
     const body = req.body;
     if (!body.body?.messages?.length) return;
@@ -143,65 +115,194 @@ app.post('/webhook', async (req, res) => {
     const msg = body.body.messages[0];
     const senderPhone = msg.senderData?.senderPhone;
     const text = msg.textMessage?.toLowerCase().trim() || '';
+    const type = msg.typeMessage;
 
     if (!senderPhone || !text) return;
 
     const isOwner = senderPhone === OWNER;
     const isWife = senderPhone === WIFE;
 
+    // ─── معالجة الرسائل الصوتية
+    if (type === 'audioMessage' && msg.audioMessageData) {
+      const audioUrl = msg.audioMessageData.urlFile;
+      const transcript = await transcribeAudio(audioUrl);
+      
+      if (transcript) {
+        await handleOwnerMessage(transcript, senderPhone);
+      }
+      return;
+    }
+
+    // ─── معالجة النصوص
     if (isOwner) {
       await handleOwnerMessage(text, senderPhone);
     } else if (isWife) {
-      await sendMsg(OWNER, `💬 من الزوجة:\n${text}`);
-      await sendMsg(senderPhone, '✅ تم التسجيل');
+      await handleWifeMessage(text, senderPhone);
+    } else {
+      await handleVisitorMessage(text, senderPhone);
     }
   } catch (e) {
     console.error('Webhook error:', e);
   }
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// HANDLE OWNER MESSAGES (SMART & AUTO)
+// ──────────────────────────────────────────────────────────────────────────────
+
 async function handleOwnerMessage(text, phone) {
   try {
+    // ─── إضافة مهمة بسيطة (مباشر — بدون تأكيد)
     if (text.startsWith('add ') || text.startsWith('اضف ')) {
-      let tasksText = text.replace(/^(add|اضف)\s+/i, '').trim();
-      const tasksList = tasksText.split(/[\n,;]/).map(t => t.trim()).filter(t => t.length > 2);
-
-      let added = 0;
-      for (const title of tasksList) {
-        const isPersonal = PERSONAL_TAGS.some(tag => title.toLowerCase().includes(tag.toLowerCase()));
-        
-        await pool.query(
-          'INSERT INTO tasks (title, type, date, priority, is_personal) VALUES ($1, $2, $3, $4, $5)',
-          [title, 'task', getRiyadhDateStr(), 'medium', isPersonal]
-        );
-        added++;
+      const title = text.replace(/^(add|اضف)\s+/i, '').trim();
+      if (!title) {
+        await sendMsg(phone, '❌ اكتب عنوان المهمة');
+        return;
       }
-
-      await sendMsg(phone, `✅ تم إضافة ${added} مهمة`);
+      
+      const dup = await pool.query(
+        'SELECT id FROM tasks WHERE LOWER(title) = LOWER($1) AND NOT done',
+        [title]
+      );
+      
+      if (dup.rows.length > 0) {
+        await sendMsg(phone, '⚠️ المهمة موجودة مسبقاً');
+        return;
+      }
+      
+      await pool.query(
+        'INSERT INTO tasks (title, type, date) VALUES ($1, $2, $3)',
+        [title, 'task', todayStr()]
+      );
+      
+      await sendMsg(phone, `✅ تم: ${title}`);
       return;
     }
 
-    if (text === 'مهام' || text === 'tasks') {
-      const tasks = await pool.query(
-        'SELECT * FROM tasks WHERE NOT done AND date = $1 LIMIT 10',
-        [getRiyadhDateStr()]
-      );
-
-      if (!tasks.rows.length) {
-        await sendMsg(phone, '✅ لا توجد مهام');
+    // ─── تسجيل اجتماع (مباشر — لا يسأل تأكيد)
+    if (text.includes('اجتماع') || text.includes('meeting')) {
+      let title = text.replace(/اجتماع|meeting/i, '').trim();
+      let time = '';
+      
+      const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+      if (timeMatch) {
+        time = `${timeMatch[1].padStart(2,'0')}:${timeMatch[2]}`;
+        title = title.replace(timeMatch[0], '').trim();
+      }
+      
+      if (!title) {
+        await sendMsg(phone, '❌ اكتب اسم الاجتماع (مثل: اجتماع احمد 3:00 م)');
         return;
       }
-
-      let msg = '📋 المهام:\n\n';
-      tasks.rows.forEach((t, i) => {
-        const tag = t.is_personal ? '🔒 ' : '📌 ';
-        msg += `${i + 1}. ${tag}${t.title}\n`;
-      });
-
-      await sendMsg(phone, msg);
+      
+      // تحقق من عدم التكرار بنفس الوقت والاسم
+      const dup = await pool.query(
+        `SELECT id FROM tasks 
+         WHERE type = 'meeting' 
+         AND LOWER(title) LIKE LOWER($1)
+         AND date = $2
+         AND time = $3
+         AND NOT done`,
+        ['%' + title + '%', todayStr(), time]
+      );
+      
+      if (dup.rows.length > 0) {
+        await sendMsg(phone, '⚠️ الاجتماع مسجل بالفعل');
+        return;
+      }
+      
+      await pool.query(
+        'INSERT INTO tasks (title, type, date, time) VALUES ($1, $2, $3, $4)',
+        [title, 'meeting', todayStr(), time]
+      );
+      
+      const timeStr = time ? ` - ${fmt12(time)}` : '';
+      await sendMsg(phone, `✅ اجتماع: ${title}${timeStr}`);
+      return;
     }
+
+    // ─── حذف آخر مهمة
+    if (text === 'حذف' || text === 'undo') {
+      const last = await pool.query(
+        'SELECT id, title FROM tasks ORDER BY created_at DESC LIMIT 1'
+      );
+      
+      if (!last.rows.length) {
+        await sendMsg(phone, '❌ لا توجد مهام لحذفها');
+        return;
+      }
+      
+      await pool.query('DELETE FROM tasks WHERE id = $1', [last.rows[0].id]);
+      await sendMsg(phone, `🗑 تم حذف: ${last.rows[0].title}`);
+      return;
+    }
+
+    // ─── عرض المهام
+    if (text === 'مهام' || text === 'tasks') {
+      const tasks = await pool.query(
+        `SELECT * FROM tasks 
+         WHERE NOT done 
+         AND date >= $1 
+         ORDER BY date ASC, time ASC 
+         LIMIT 10`,
+        [todayStr()]
+      );
+      
+      if (!tasks.rows.length) {
+        await sendMsg(phone, '✅ لا توجد مهام متبقية');
+        return;
+      }
+      
+      let msg = '📋 *المهام*:\n\n';
+      tasks.rows.forEach((t, i) => {
+        msg += `${i+1}. *${t.title}*\n`;
+        if (t.date) msg += `   📅 ${t.date}`;
+        if (t.time) msg += ` ${fmt12(t.time)}`;
+        msg += '\n\n';
+      });
+      
+      await sendMsg(phone, msg);
+      return;
+    }
+
+    // ─── رسائل عامة
+    await sendMsg(phone, 'أوامر: add/اضف، اجتماع، حذف، مهام');
+
   } catch (e) {
-    console.error('Message error:', e);
+    console.error('Owner message error:', e);
+    await sendMsg(phone, '❌ خطأ: ' + e.message);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// HANDLE WIFE MESSAGES
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function handleWifeMessage(text, phone) {
+  // أرسل كل رسائل الزوجة مباشرة للمالك
+  await sendMsg(OWNER, `💬 *من الزوجة*:\n${text}`);
+  await sendMsg(phone, '✅ تم التسجيل');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// HANDLE VISITOR MESSAGES
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function handleVisitorMessage(text, phone) {
+  await sendMsg(phone, '👋 شكراً على التواصل. سيتم الرد عليك قريباً.');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TRANSCRIBE AUDIO (FUTURE)
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function transcribeAudio(audioUrl) {
+  try {
+    // سيتم إضافة Whisper API لاحقاً
+    return null;
+  } catch (e) {
+    console.error('Transcribe error:', e);
+    return null;
   }
 }
 
@@ -211,7 +312,9 @@ async function handleOwnerMessage(text, phone) {
 
 app.get('/tasks', async (req, res) => {
   try {
-    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
+    const tasks = await pool.query(
+      'SELECT * FROM tasks ORDER BY date DESC, time DESC'
+    );
     res.json(tasks.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -220,18 +323,13 @@ app.get('/tasks', async (req, res) => {
 
 app.post('/tasks', async (req, res) => {
   try {
-    const { title, description, priority, date, time, assignee, tags, column_id } = req.body;
-
-    const isPersonal = PERSONAL_TAGS.some(tag => 
-      title.toLowerCase().includes(tag.toLowerCase()) || 
-      tags?.toLowerCase().includes(tag.toLowerCase())
-    );
-
+    const { title, type, priority, date, time, done } = req.body;
+    
     const result = await pool.query(
-      'INSERT INTO tasks (title, description, priority, date, time, assignee, tags, column_id, is_personal) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
-      [title, description || null, priority || 'medium', date, time, assignee, tags, column_id || null, isPersonal]
+      'INSERT INTO tasks (title, type, priority, date, time, done) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [title, type || 'task', priority || 'normal', date, time, done || false]
     );
-
+    
     res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -241,33 +339,44 @@ app.post('/tasks', async (req, res) => {
 app.patch('/tasks/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, done, priority, date, time, assignee, tags, column_id } = req.body;
-
+    const { title, done, priority, date, time } = req.body;
+    
     const updates = [];
     const values = [];
     let paramCount = 1;
-
-    if (title !== undefined) { updates.push(`title = $${paramCount++}`); values.push(title); }
-    if (description !== undefined) { updates.push(`description = $${paramCount++}`); values.push(description); }
-    if (done !== undefined) { updates.push(`done = $${paramCount++}`); values.push(done); }
-    if (priority !== undefined) { updates.push(`priority = $${paramCount++}`); values.push(priority); }
-    if (date !== undefined) { updates.push(`date = $${paramCount++}`); values.push(date); }
-    if (time !== undefined) { updates.push(`time = $${paramCount++}`); values.push(time); }
-    if (assignee !== undefined) { updates.push(`assignee = $${paramCount++}`); values.push(assignee); }
-    if (tags !== undefined) { updates.push(`tags = $${paramCount++}`); values.push(tags); }
-    if (column_id !== undefined) { updates.push(`column_id = $${paramCount++}`); values.push(column_id); }
-
-    updates.push(`updated_at = NOW()`);
-
-    if (!updates.length) return res.json({ error: 'nothing to update' });
-
+    
+    if (title !== undefined) {
+      updates.push(`title = $${paramCount++}`);
+      values.push(title);
+    }
+    if (done !== undefined) {
+      updates.push(`done = $${paramCount++}`);
+      values.push(done);
+    }
+    if (priority !== undefined) {
+      updates.push(`priority = $${paramCount++}`);
+      values.push(priority);
+    }
+    if (date !== undefined) {
+      updates.push(`date = $${paramCount++}`);
+      values.push(date);
+    }
+    if (time !== undefined) {
+      updates.push(`time = $${paramCount++}`);
+      values.push(time);
+    }
+    
+    if (!updates.length) {
+      return res.json({ error: 'nothing to update' });
+    }
+    
     values.push(id);
-
+    
     const result = await pool.query(
       `UPDATE tasks SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
       values
     );
-
+    
     res.json(result.rows[0] || { error: 'not found' });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -284,218 +393,39 @@ app.delete('/tasks/:id', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// EXPORT ENDPOINTS
+// SERVE DASHBOARDS
 // ──────────────────────────────────────────────────────────────────────────────
-
-app.get('/export/csv', async (req, res) => {
-  try {
-    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
-    const csv = generateCSV(tasks.rows);
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="المهام_${getRiyadhDateStr()}.csv"`);
-    res.send(csv);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/export/excel', async (req, res) => {
-  try {
-    const tasks = await pool.query('SELECT * FROM tasks ORDER BY date DESC, time DESC');
-    const csv = generateCSV(tasks.rows);
-
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="المهام_${getRiyadhDateStr()}.xlsx"`);
-    res.send(csv);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// KANBAN ENDPOINTS
-// ──────────────────────────────────────────────────────────────────────────────
-
-app.get('/kanban/columns', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT c.id, c.name, c.color, c.created_at,
-             json_agg(json_build_object('id', t.id, 'title', t.title, 'date', t.date, 'done', t.done, 'priority', t.priority)) 
-             FILTER (WHERE t.id IS NOT NULL) as cards
-      FROM kanban_columns c
-      LEFT JOIN tasks t ON t.column_id = c.id
-      GROUP BY c.id, c.name, c.color, c.created_at
-      ORDER BY c.created_at ASC
-    `);
-
-    res.json(result.rows.map(col => ({
-      ...col,
-      cards: col.cards || []
-    })));
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/kanban/columns', async (req, res) => {
-  try {
-    const { name, color } = req.body;
-    const result = await pool.query(
-      'INSERT INTO kanban_columns (name, color) VALUES ($1, $2) RETURNING *',
-      [name, color || '#1e3a5f']
-    );
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/kanban/columns/:id', async (req, res) => {
-  try {
-    const result = await pool.query(
-      'UPDATE kanban_columns SET name = $1 WHERE id = $2 RETURNING *',
-      [req.body.name, req.params.id]
-    );
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/kanban/columns/:id', async (req, res) => {
-  try {
-    await pool.query('DELETE FROM tasks WHERE column_id = $1', [req.params.id]);
-    await pool.query('DELETE FROM kanban_columns WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/kanban/cards', async (req, res) => {
-  try {
-    const { column_id, title, date, time } = req.body;
-    const result = await pool.query(
-      'INSERT INTO tasks (title, date, time, column_id, type) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [title, date || null, time || null, column_id, 'task']
-    );
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/kanban/cards/:id', async (req, res) => {
-  try {
-    const { column_id, done } = req.body;
-    const result = await pool.query(
-      `UPDATE tasks SET ${column_id !== undefined ? 'column_id = $1,' : ''}${done !== undefined ? 'done = $' + (column_id !== undefined ? '2' : '1') : ''} WHERE id = $${column_id !== undefined && done !== undefined ? '3' : column_id !== undefined ? '2' : '2'} RETURNING *`,
-      [...(column_id !== undefined ? [column_id] : []), ...(done !== undefined ? [done] : []), req.params.id]
-    );
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/kanban/cards/:id', async (req, res) => {
-  try {
-    await pool.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// API: Get current Riyadh time
-// ──────────────────────────────────────────────────────────────────────────────
-
-app.get('/api/riyadh-time', (req, res) => {
-  res.json({
-    date: getRiyadhDateStr(),
-    time: getRiyadhTimeStr(),
-    day: getRiyadhDay(),
-    dayName: ['أحد', 'اثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'][getRiyadhDay()],
-    isVacation: VACATION_DAYS.includes(getRiyadhDay()),
-    timestamp: getRiyadhDate().getTime()
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// SERVE PAGES
-// ──────────────────────────────────────────────────────────────────────────────
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard_riyadh.html'));
-});
 
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard_riyadh.html'));
+  res.sendFile(path.join(__dirname, 'dashboard.html'));
 });
 
 app.get('/kanban', (req, res) => {
   res.sendFile(path.join(__dirname, 'kanban.html'));
 });
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: getRiyadhDateStr() });
-});
-
 // ──────────────────────────────────────────────────────────────────────────────
-// SCHEDULED TASKS
+// HTTPS REDIRECT
 // ──────────────────────────────────────────────────────────────────────────────
 
-cron.schedule('0 8 * * *', async () => {
-  try {
-    const today = getRiyadhDateStr();
-    const personalTasks = await pool.query(
-      'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = true',
-      [today]
-    );
-
-    if (personalTasks.rows.length > 0 && OWNER) {
-      let msg = '🔒 المهام الشخصية:\n\n';
-      personalTasks.rows.forEach((t, i) => {
-        msg += `${i + 1}. ${t.title}\n`;
-      });
-      await sendMsg(OWNER, msg);
-    }
-  } catch (e) {
-    console.error('Personal tasks error:', e);
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && !req.secure) {
+    return res.redirect('https://' + req.headers.host + req.url);
   }
-});
-
-cron.schedule('0 9 * * *', async () => {
-  try {
-    if (VACATION_DAYS.includes(getRiyadhDay())) return;
-
-    const today = getRiyadhDateStr();
-    const tasks = await pool.query(
-      'SELECT * FROM tasks WHERE date = $1 AND NOT done AND is_personal = false',
-      [today]
-    );
-
-    if (tasks.rows.length > 0 && OWNER) {
-      let msg = '📋 تذكير المهام:\n\n';
-      tasks.rows.forEach((t, i) => {
-        msg += `${i + 1}. ${t.title}\n`;
-      });
-      await sendMsg(OWNER, msg);
-    }
-  } catch (e) {
-    console.error('Cron error:', e);
-  }
+  next();
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ERROR HANDLING
+// SECURITY HEADERS
 // ──────────────────────────────────────────────────────────────────────────────
 
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({ error: 'Internal Server Error' });
+app.use((req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Content-Security-Policy', "default-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com");
+  next();
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -504,13 +434,5 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════╗
-║  ✅ مهامي - النسخة الذكية             ║
-║  🚀 Server running on port ${PORT}      ║
-║  📊 Dashboard: /dashboard              ║
-║  🎨 Kanban: /kanban                    ║
-║  🕒 توقيت الرياض (UTC+3)              ║
-╚════════════════════════════════════════╝
-  `);
+  console.log(`✅ Server running on port ${PORT}`);
 });
